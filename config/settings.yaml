@@ -1,0 +1,13 @@
+crawler:
+  dry_run: true
+  max_docs_per_source: 10
+  interval_hours: 6
+  user_agent: "FOIAArchiveBot/0.1 (contact@example.com)"
+
+foia_hub:
+  base_url: "https://www.foia.gov/api"
+  timeout_seconds: 30
+
+storage:
+  db_path: "data/foia_archive.db"
+  files_dir: "data/files"
