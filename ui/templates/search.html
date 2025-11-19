@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>FOIA Archive</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        form { margin-bottom: 20px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 8px; }
+        th { background: #f4f4f4; text-align: left; }
+        .filters { display: flex; gap: 10px; flex-wrap: wrap; }
+        .filters label { display: block; font-weight: bold; }
+    </style>
+</head>
+<body>
+<h1>FOIA Archive</h1>
+<form method="get">
+    <div class="filters">
+        <div>
+            <label for="agency_id">Agency</label>
+            <select name="agency_id" id="agency_id" onchange="this.form.submit()">
+                <option value="">All</option>
+                {% for agency in agencies %}
+                    <option value="{{ agency.id }}" {% if selected_agency == agency.id %}selected{% endif %}>{{ agency.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="office_id">Office</label>
+            <select name="office_id" id="office_id">
+                <option value="">All</option>
+                {% for office in offices %}
+                    <option value="{{ office.id }}" {% if selected_office == office.id %}selected{% endif %}>{{ office.name }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="file_type">File type</label>
+            <select name="file_type" id="file_type">
+                <option value="">All</option>
+                {% for ft in file_types %}
+                    <option value="{{ ft }}" {% if selected_file_type == ft %}selected{% endif %}>{{ ft }}</option>
+                {% endfor %}
+            </select>
+        </div>
+        <div>
+            <label for="start_date">Start date</label>
+            <input type="date" id="start_date" name="start_date" value="{{ start_date or '' }}">
+        </div>
+        <div>
+            <label for="end_date">End date</label>
+            <input type="date" id="end_date" name="end_date" value="{{ end_date or '' }}">
+        </div>
+    </div>
+    <div style="margin-top: 10px;">
+        <button type="submit">Search</button>
+    </div>
+</form>
+
+<table>
+    <thead>
+    <tr>
+        <th>Title</th>
+        <th>Agency</th>
+        <th>Office</th>
+        <th>File type</th>
+        <th>Published</th>
+        <th>Discovered</th>
+        <th>Links</th>
+    </tr>
+    </thead>
+    <tbody>
+    {% for doc in documents %}
+        <tr>
+            <td>{{ doc.title or doc.filename or 'Document' }}</td>
+            <td>{{ doc.agency_name or '—' }}</td>
+            <td>{{ doc.office_name or '—' }}</td>
+            <td>{{ doc.file_type or 'unknown' }}</td>
+            <td>{{ doc.published_date or '—' }}</td>
+            <td>{{ doc.discovered_at or '—' }}</td>
+            <td>
+                {% if doc.local_path %}<a href="/files/{{ doc.local_path }}" target="_blank">Download</a>{% endif %}
+                {% if doc.url %}<a href="{{ doc.url }}" target="_blank">Source</a>{% endif %}
+            </td>
+        </tr>
+    {% endfor %}
+    </tbody>
+</table>
+</body>
+</html>
