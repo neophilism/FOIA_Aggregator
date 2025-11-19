@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import logging
+import re
+import unicodedata
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -71,3 +73,17 @@ def parse_bool(value: Optional[str]) -> Optional[bool]:
         return False
 
     raise ValueError(f"Cannot parse boolean value from '{value}'")
+
+
+def slugify(value: str) -> str:
+    """Return a filesystem- and URL-friendly slug for a label.
+
+    The helper keeps alphanumerics, converts whitespace to hyphens, strips
+    punctuation, and lowercases the result. Falls back to ``"item"`` when the
+    computed slug is empty.
+    """
+
+    normalized = unicodedata.normalize("NFKD", value or "").encode("ascii", "ignore").decode("ascii")
+    normalized = normalized.lower()
+    normalized = re.sub(r"[^a-z0-9]+", "-", normalized).strip("-")
+    return normalized or "item"
