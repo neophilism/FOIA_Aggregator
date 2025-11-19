@@ -49,3 +49,25 @@ def load_config(path: str, overrides: Optional[Dict[str, Any]] = None) -> Config
 
 def clean_filename(name: str) -> str:
     return "".join(c for c in name if c.isalnum() or c in (".", "_", "-")) or "document"
+
+
+def parse_bool(value: Optional[str]) -> Optional[bool]:
+    """Parse a truthy/falsey string into a boolean.
+
+    Accepts common variants like "true", "false", "yes", "no", "1", and "0" (case-insensitive).
+    Returns ``None`` when value is ``None`` to allow callers to fall back to defaults.
+    """
+
+    if value is None:
+        return None
+
+    normalized = value.strip().lower()
+    truthy = {"1", "true", "t", "yes", "y", "on"}
+    falsey = {"0", "false", "f", "no", "n", "off"}
+
+    if normalized in truthy:
+        return True
+    if normalized in falsey:
+        return False
+
+    raise ValueError(f"Cannot parse boolean value from '{value}'")
