@@ -16,6 +16,39 @@ def fetch_json(url: str, timeout: int, headers: Dict[str, str], params: Dict | N
     return resp.json()
 
 
+def _fetch_paginated(
+    base_url: str, path: str, timeout: int, headers: Dict[str, str], params: Dict | None = None
+) -> Tuple[List[Dict], List[Dict]]:
+    """Fetch all pages for a JSON:API endpoint, following page[number] and links.next."""
+
+    results: List[Dict] = []
+    included: List[Dict] = []
+    page_number = 1
+    params = dict(params or {})
+    params.setdefault("page[size]", 100)
+
+    while True:
+        page_params = dict(params)
+        page_params["page[number]"] = page_number
+        url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+        payload = fetch_json(url, timeout, headers, params=page_params)
+        batch = payload.get("data") or []
+        results.extend(batch)
+        included.extend(payload.get("included") or [])
+
+        links = payload.get("links") or {}
+        if not links.get("next") or not batch:
+            break
+        page_number += 1
+
+    return results, included
+
+
+def fetch_agencies(base_url: str, timeout: int, headers: Dict[str, str]) -> List[Dict]:
+    agencies, _ = _fetch_paginated(base_url, "agency", timeout, headers)
+    return agencies
+
+
 def fetch_agency_components(base_url: str, timeout: int, headers: Dict[str, str]) -> Tuple[List[Dict], List[Dict]]:
     """Fetch FOIA agency components (units) from the FOIA.gov API.
 
@@ -23,38 +56,31 @@ def fetch_agency_components(base_url: str, timeout: int, headers: Dict[str, str]
     collection of JSON:API resource objects.
     """
 
-    components: List[Dict] = []
-    included_agencies: List[Dict] = []
-    offset = 0
-    page_limit = 100
-
-    # Pull the full attribute payload (no field filtering) so we can extract
-    # any URLs present in the component metadata that might point to reading rooms.
-    while True:
-        params = {
-            "include": "agency",
-            "page[limit]": page_limit,
-            "page[offset]": offset,
-        }
-        url = f"{base_url.rstrip('/')}/agency_components"
-        payload = fetch_json(url, timeout, headers, params=params)
-
-        batch = payload.get("data") or []
-        components.extend(batch)
-        included = payload.get("included") or []
-        included_agencies.extend([i for i in included if i.get("type") == "agency"])
-
-        if len(batch) < page_limit:
-            break
-        offset += page_limit
-
-    return components, included_agencies
+    params = {"include": "agency"}
+    return _fetch_paginated(base_url, "agency_components", timeout, headers, params=params)
 
 
 def _extract_urls_from_attrs(attrs: Dict) -> List[str]:
     """Return all HTTP(S) URLs found within an attribute dict."""
 
     urls: List[str] = []
+
+    def collect_targeted_fields():
+        # Prefer likely reading-room fields before falling back to brute-force scanning.
+        targeted_keys = [
+            "reading_rooms",
+            "reading_room",
+            "foia_libraries",
+            "foia_library",
+            "resources",
+            "links",
+            "website",
+            "websites",
+            "request_form",
+        ]
+        for key in targeted_keys:
+            if key in attrs:
+                collect(attrs[key])
 
     def collect(value):
         if isinstance(value, str) and value.startswith("http"):
@@ -66,6 +92,9 @@ def _extract_urls_from_attrs(attrs: Dict) -> List[str]:
             for v in value:
                 collect(v)
 
+    collect_targeted_fields()
+    # Backfill with a generic crawl over the full attribute payload in case URLs live
+    # in unexpected keys.
     collect(attrs)
     return urls
 
@@ -87,11 +116,20 @@ def refresh_metadata(config: Config) -> None:
     }
     conn = get_connection(config.storage.get("db_path"))
 
+    agencies = fetch_agencies(base_url, timeout, headers)
     components, included_agencies = fetch_agency_components(base_url, timeout, headers)
-    logger.info("Fetched %s agency components", len(components))
+    logger.info("Fetched %s agencies and %s agency components", len(agencies), len(components))
 
     agency_cache: Dict[str, int] = {}
-    agency_lookup: Dict[str, Dict] = {a.get("id"): a for a in included_agencies}
+    agency_lookup: Dict[str, Dict] = {a.get("id"): a for a in agencies + included_agencies}
+
+    # Persist agencies up front so component handling can link to them reliably.
+    for agency in agencies:
+        agency_attrs = agency.get("attributes", {})
+        agency_name = agency_attrs.get("name") or agency_attrs.get("abbreviation") or agency.get("id") or "agency"
+        agency_slug = slugify(agency_name)
+        agency_id = upsert_agency(conn, agency_slug, agency_name, agency_attrs)
+        agency_cache[agency_slug] = agency_id
 
     for component in components:
         attrs = component.get("attributes", {})
