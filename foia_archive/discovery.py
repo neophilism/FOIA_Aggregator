@@ -28,11 +28,11 @@ def fetch_agency_components(base_url: str, timeout: int, headers: Dict[str, str]
     offset = 0
     page_limit = 100
 
+    # Pull the full attribute payload (no field filtering) so we can extract
+    # any URLs present in the component metadata that might point to reading rooms.
     while True:
         params = {
             "include": "agency",
-            "fields[agency_component]": "title,abbreviation,agency,request_form_url,website",
-            "fields[agency]": "name,abbreviation",
             "page[limit]": page_limit,
             "page[offset]": offset,
         }
@@ -49,6 +49,25 @@ def fetch_agency_components(base_url: str, timeout: int, headers: Dict[str, str]
         offset += page_limit
 
     return components, included_agencies
+
+
+def _extract_urls_from_attrs(attrs: Dict) -> List[str]:
+    """Return all HTTP(S) URLs found within an attribute dict."""
+
+    urls: List[str] = []
+
+    def collect(value):
+        if isinstance(value, str) and value.startswith("http"):
+            urls.append(value)
+        elif isinstance(value, dict):
+            for v in value.values():
+                collect(v)
+        elif isinstance(value, (list, tuple, set)):
+            for v in value:
+                collect(v)
+
+    collect(attrs)
+    return urls
 
 
 def refresh_metadata(config: Config) -> None:
@@ -96,13 +115,10 @@ def refresh_metadata(config: Config) -> None:
 
         office_id = upsert_office(conn, office_slug, office_name or office_slug, agency_id, attrs)
 
-        library_urls: List[str] = []
-        for key in ("website", "request_form_url"):
-            value = attrs.get(key)
-            if isinstance(value, list):
-                library_urls.extend([u for u in value if u])
-            elif isinstance(value, str) and value:
-                library_urls.append(value)
+        # Capture any URLs from the component attributes; the FOIA API uses
+        # multiple fields for forms, websites, and other publicly available
+        # records links, so we scan all attribute values for HTTP(S) URLs.
+        library_urls = _extract_urls_from_attrs(attrs)
 
         # De-duplicate and persist any discovered reading rooms.
         for url in {u.strip() for u in library_urls if u and isinstance(u, str)}:
