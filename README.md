@@ -1,6 +1,6 @@
 # FOIA Aggregator
 
-Minimal FOIA archive engine that discovers agency reading rooms from FOIA.gov, scrapes document links, and exposes a simple search UI.
+Minimal FOIA archive engine that discovers agency reading rooms from FOIA.gov (via the `agency_components` API), scrapes document links, and exposes a simple search UI.
 
 ## Setup
 
@@ -10,7 +10,13 @@ Minimal FOIA archive engine that discovers agency reading rooms from FOIA.gov, s
 pip install -r requirements.txt
 ```
 
-2. Ensure the data directories exist (created automatically on first run) and adjust configuration in `config/settings.yaml` as needed.
+2. Export your FOIA.gov API key (or set `foia_hub.api_key` in `config/settings.yaml`):
+
+```bash
+export FOIA_API_KEY="MY_KEY"
+```
+
+3. Ensure the data directories exist (created automatically on first run) and adjust configuration in `config/settings.yaml` as needed.
 
 ## CLI Usage
 
