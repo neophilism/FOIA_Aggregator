@@ -19,29 +19,39 @@ def fetch_json(url: str, timeout: int, headers: Dict[str, str], params: Dict | N
 def _fetch_paginated(
     base_url: str, path: str, timeout: int, headers: Dict[str, str], params: Dict | None = None
 ) -> Tuple[List[Dict], List[Dict]]:
-    """Fetch all pages for a JSON:API endpoint, following page[number] and links.next."""
+    """Fetch all pages for a JSON:API endpoint following provided next links."""
 
     results: List[Dict] = []
     included: List[Dict] = []
-    page_number = 1
     params = dict(params or {})
     params.setdefault("page[size]", 100)
 
-    while True:
-        page_params = dict(params)
-        page_params["page[number]"] = page_number
-        url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
-        payload = fetch_json(url, timeout, headers, params=page_params)
+    next_url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+    next_params = dict(params)
+    seen_urls = set()
+
+    while next_url:
+        if next_url in seen_urls:
+            break
+        seen_urls.add(next_url)
+
+        payload = fetch_json(next_url, timeout, headers, params=next_params)
         batch = payload.get("data") or []
         results.extend(batch)
         included.extend(payload.get("included") or [])
 
         links = payload.get("links") or {}
-        if not links.get("next") or not batch:
+        raw_next = links.get("next")
+        if not raw_next or not batch:
             break
-        page_number += 1
 
-    return results, included
+        next_href = raw_next.get("href") if isinstance(raw_next, dict) else raw_next
+        if not next_href:
+            break
+
+        next_url = next_href
+        # The next URL already encodes pagination parameters; avoid mixing param styles.
+        next_params = None
 
 
 def fetch_agencies(base_url: str, timeout: int, headers: Dict[str, str]) -> List[Dict]:
