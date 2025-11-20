@@ -1,0 +1,7 @@
+requests
+pyyaml
+typer[all]
+fastapi
+uvicorn
+jinja2
+beautifulsoup4
