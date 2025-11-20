@@ -53,6 +53,8 @@ def _fetch_paginated(
         # The next URL already encodes pagination parameters; avoid mixing param styles.
         next_params = None
 
+    return results, included
+
 
 def fetch_agencies(base_url: str, timeout: int, headers: Dict[str, str]) -> List[Dict]:
     agencies, _ = _fetch_paginated(base_url, "agency", timeout, headers)
