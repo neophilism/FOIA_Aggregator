@@ -557,10 +557,13 @@ def _request_with_safe_redirects(
     headers: dict,
     timeout: float,
     max_redirects: int,
+    rate_limiter: Optional[HostRateLimiter] = None,
 ):
     current_url = url
     for redirect_count in range(max_redirects + 1):
         _validate_public_destination(current_url)
+        if rate_limiter is not None:
+            rate_limiter.wait(current_url)
         response = requests.get(
             current_url,
             headers=headers,
@@ -568,10 +571,12 @@ def _request_with_safe_redirects(
             stream=True,
             allow_redirects=False,
         )
-        if response.status_code not in REDIRECT_STATUS_CODES:
+        status_code = getattr(response, "status_code", 200)
+        if status_code not in REDIRECT_STATUS_CODES:
             return response, current_url
 
-        location = response.headers.get("Location")
+        headers_map = getattr(response, "headers", {}) or {}
+        location = headers_map.get("Location") or headers_map.get("location")
         _close_response(response)
         if not location:
             raise requests.HTTPError(
