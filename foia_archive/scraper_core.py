@@ -11,8 +11,8 @@ import requests
 from bs4 import BeautifulSoup
 
 from .storage import (
-    document_exists,
     get_connection,
+    get_document_by_url,
     insert_document,
     list_reading_rooms,
     update_document_published_date_if_missing,
@@ -219,12 +219,12 @@ def extract_document_links(html: str, base_url: str) -> List[DocumentLink]:
 
 def _save_file(content: bytes, url: str, files_dir: Path, filename_hint: str) -> Path:
     parsed = urlparse(url)
-    ext = parsed.path.split(".")[-1] if "." in parsed.path else ""
+    ext = parsed.path.rsplit(".", 1)[-1].lower() if "." in parsed.path else ""
     safe_name = clean_filename(filename_hint) or "document"
+    if ext and not safe_name.lower().endswith(f".{ext}"):
+        safe_name = f"{safe_name}.{ext}"
     digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:10]
     filename = f"{digest}_{safe_name}"
-    if ext:
-        filename = f"{filename}.{ext}"
     path = files_dir / filename
     with path.open("wb") as f:
         f.write(content)
@@ -276,32 +276,45 @@ def crawl_reading_room(rr_id: int, config: Config, dry_run: bool, max_docs: Opti
         ext = path.split(".")[-1].lower() if "." in path else ""
         filename_hint = path.split("/")[-1] or "document"
 
-        if document_exists(conn, url):
+        existing = get_document_by_url(conn, url)
+        if existing:
             update_document_published_date_if_missing(conn, url, published_date)
+            doc_id = existing["id"]
+            if existing["local_path"]:
+                continue
+        else:
+            if dry_run and max_docs is not None and downloaded >= max_docs:
+                logger.info("Dry run limit reached for %s", rr["url"])
+                break
+
+            discovered_at = datetime.utcnow().isoformat()
+            doc_id = insert_document(
+                conn,
+                url=url,
+                title=title,
+                file_type=ext,
+                filename=filename_hint,
+                agency_id=rr["agency_id"],
+                office_id=rr["office_id"],
+                reading_room_id=rr_id,
+                discovered_at=discovered_at,
+                published_date=published_date,
+            )
+
+        if dry_run:
+            downloaded += 1
             continue
 
-        if dry_run and max_docs is not None and downloaded >= max_docs:
-            logger.info("Dry run limit reached for %s", rr["url"])
-            break
-
-        discovered_at = datetime.utcnow().isoformat()
-        doc_id = insert_document(
-            conn,
-            url=url,
-            title=title,
-            file_type=ext,
-            filename=filename_hint,
-            agency_id=rr["agency_id"],
-            office_id=rr["office_id"],
-            reading_room_id=rr_id,
-            discovered_at=discovered_at,
-            published_date=published_date,
-        )
-
-        if not dry_run:
-            local_path = download_document(url, filename_hint, config)
-            if local_path:
-                update_download_metadata(conn, doc_id, str(local_path.relative_to(Path.cwd())), datetime.utcnow().isoformat())
+        local_path = download_document(url, filename_hint, config)
+        if local_path:
+            files_dir = Path(config.storage.get("files_dir"))
+            stored_path = local_path.relative_to(files_dir)
+            update_download_metadata(
+                conn,
+                doc_id,
+                stored_path.as_posix(),
+                datetime.utcnow().isoformat(),
+            )
         downloaded += 1
 
     update_reading_room_crawled(conn, rr_id, datetime.utcnow().isoformat())
