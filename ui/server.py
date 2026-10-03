@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from foia_archive.storage import init_db, query_documents
+from foia_archive.storage import get_connection, init_db, query_documents
 from foia_archive.utils import load_config
 
 config = load_config("config/settings.yaml")
@@ -24,9 +24,7 @@ app.mount("/files", StaticFiles(directory=str(FILES_DIR)), name="files")
 
 
 def get_db() -> sqlite3.Connection:
-    conn = sqlite3.connect(DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+    return get_connection(DB_PATH)
 
 
 def fetch_agencies(conn: sqlite3.Connection) -> List[sqlite3.Row]:
