@@ -20,6 +20,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from .storage import (
+    associate_document_source,
     get_connection,
     get_document_by_url,
     insert_document,
@@ -854,6 +855,12 @@ def _process_document_candidate(
     if existing:
         update_document_published_date_if_missing(conn, canonical, published_date)
         doc_id = existing["id"]
+        associate_document_source(
+            conn,
+            doc_id,
+            rr["id"],
+            datetime.utcnow().isoformat(),
+        )
         if existing["local_path"]:
             files_dir = Path(config.storage.get("files_dir"))
             archived_path = files_dir / existing["local_path"]
