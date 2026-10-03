@@ -21,10 +21,11 @@ from .storage import (
     get_document_by_url,
     insert_document,
     list_reading_rooms,
+    record_reading_room_crawl_failure,
+    record_reading_room_crawl_success,
     update_document_published_date_if_missing,
     update_download_failure,
     update_download_metadata,
-    update_reading_room_crawled,
 )
 from .utils import Config, clean_filename, logger
 
@@ -521,7 +522,15 @@ def crawl_reading_room(rr_id: int, config: Config, dry_run: bool, max_docs: Opti
         resp = requests.get(rr["url"], headers=headers, timeout=60)
         resp.raise_for_status()
     except Exception as exc:  # noqa: BLE001
+        attempted_at = datetime.utcnow().isoformat()
+        error = f"{type(exc).__name__}: {exc}"[:2000]
         logger.warning("Failed to fetch reading room %s: %s", rr["url"], exc)
+        record_reading_room_crawl_failure(
+            conn,
+            rr_id,
+            attempted_at,
+            error,
+        )
         conn.close()
         return
 
@@ -605,5 +614,9 @@ def crawl_reading_room(rr_id: int, config: Config, dry_run: bool, max_docs: Opti
             )
         downloaded += 1
 
-    update_reading_room_crawled(conn, rr_id, datetime.utcnow().isoformat())
+    record_reading_room_crawl_success(
+        conn,
+        rr_id,
+        datetime.utcnow().isoformat(),
+    )
     conn.close()

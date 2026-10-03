@@ -38,6 +38,12 @@ Continuous mode:
 python main.py daemon
 ```
 
+## Source discovery
+
+FOIA.gov component metadata is treated conservatively. Only fields explicitly describing FOIA reading rooms, FOIA libraries, proactive disclosures, or frequently requested records become crawl targets. General agency websites, request forms, generic resource fields, and unrelated links are not guessed into the source set.
+
+Each discovered source tracks whether it is active, when it was last seen in a complete metadata refresh, its last successful crawl, and its most recent crawl error. A complete refresh marks previously known but unseen sources inactive; empty or unrecognized metadata refreshes preserve the existing active set as a safety measure.
+
 ## Download safety
 
 Document downloads are limited to public HTTP(S) destinations. Redirects are revalidated, private/loopback/link-local destinations are rejected, files are streamed to temporary files before atomic placement in the archive, and configurable size/retry limits live under `downloader` in `config/settings.yaml`.

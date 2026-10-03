@@ -29,6 +29,12 @@ CREATE TABLE IF NOT EXISTS reading_rooms (
     agency_id INTEGER,
     office_id INTEGER,
     last_crawled_at TEXT,
+    source_type TEXT,
+    active INTEGER DEFAULT 1,
+    last_seen_at TEXT,
+    last_successful_crawl_at TEXT,
+    last_error TEXT,
+    last_error_at TEXT,
     FOREIGN KEY (agency_id) REFERENCES agencies(id),
     FOREIGN KEY (office_id) REFERENCES offices(id)
 );
@@ -69,4 +75,14 @@ DOCUMENTS_ADDITIONAL_COLUMNS = {
     "download_status": "TEXT DEFAULT 'pending'",
     "download_error": "TEXT",
     "last_download_attempt_at": "TEXT",
+}
+
+
+READING_ROOMS_ADDITIONAL_COLUMNS = {
+    "source_type": "TEXT",
+    "active": "INTEGER DEFAULT 1",
+    "last_seen_at": "TEXT",
+    "last_successful_crawl_at": "TEXT",
+    "last_error": "TEXT",
+    "last_error_at": "TEXT",
 }

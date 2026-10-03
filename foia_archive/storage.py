@@ -31,6 +31,21 @@ def init_db(db_path: Path | str, files_dir: Path | str) -> None:
     cur.execute(models.OFFICES_TABLE)
     cur.execute(models.READING_ROOMS_TABLE)
     cur.execute(models.DOCUMENTS_TABLE)
+
+    reading_room_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(reading_rooms)").fetchall()
+    }
+    for column, definition in models.READING_ROOMS_ADDITIONAL_COLUMNS.items():
+        if column not in reading_room_columns:
+            conn.execute(f"ALTER TABLE reading_rooms ADD COLUMN {column} {definition}")
+    conn.execute(
+        """
+        UPDATE reading_rooms
+        SET active = 1
+        WHERE active IS NULL
+        """
+    )
+
     existing_columns = {
         row["name"] for row in conn.execute("PRAGMA table_info(documents)").fetchall()
     }
@@ -61,7 +76,13 @@ def init_db(db_path: Path | str, files_dir: Path | str) -> None:
 def upsert_agency(conn: sqlite3.Connection, slug: str, name: str, raw_json: Dict[str, Any]) -> int:
     cur = conn.cursor()
     cur.execute(
-        "INSERT OR IGNORE INTO agencies (slug, name, raw_json) VALUES (?, ?, ?)",
+        """
+        INSERT INTO agencies (slug, name, raw_json)
+        VALUES (?, ?, ?)
+        ON CONFLICT(slug) DO UPDATE SET
+            name = excluded.name,
+            raw_json = excluded.raw_json
+        """,
         (slug, name, json.dumps(raw_json)),
     )
     conn.commit()
@@ -78,7 +99,14 @@ def upsert_office(
 ) -> int:
     cur = conn.cursor()
     cur.execute(
-        "INSERT OR IGNORE INTO offices (slug, name, agency_id, raw_json) VALUES (?, ?, ?, ?)",
+        """
+        INSERT INTO offices (slug, name, agency_id, raw_json)
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(slug) DO UPDATE SET
+            name = excluded.name,
+            agency_id = excluded.agency_id,
+            raw_json = excluded.raw_json
+        """,
         (slug, name, agency_id, json.dumps(raw_json)),
     )
     conn.commit()
@@ -93,23 +121,62 @@ def upsert_reading_room(
     level: str,
     agency_id: Optional[int],
     office_id: Optional[int],
+    source_type: Optional[str] = None,
+    seen_at: Optional[str] = None,
 ) -> int:
     cur = conn.cursor()
     cur.execute(
-        "INSERT OR IGNORE INTO reading_rooms (url, label, level, agency_id, office_id) VALUES (?, ?, ?, ?, ?)",
-        (url, label, level, agency_id, office_id),
+        """
+        INSERT INTO reading_rooms (
+            url, label, level, agency_id, office_id,
+            source_type, active, last_seen_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, 1, ?)
+        ON CONFLICT(url) DO UPDATE SET
+            label = excluded.label,
+            level = excluded.level,
+            agency_id = excluded.agency_id,
+            office_id = excluded.office_id,
+            source_type = COALESCE(excluded.source_type, reading_rooms.source_type),
+            active = 1,
+            last_seen_at = COALESCE(excluded.last_seen_at, reading_rooms.last_seen_at)
+        """,
+        (url, label, level, agency_id, office_id, source_type, seen_at),
     )
     conn.commit()
     cur.execute("SELECT id FROM reading_rooms WHERE url = ?", (url,))
     return cur.fetchone()[0]
 
 
-def list_reading_rooms(conn: sqlite3.Connection, limit: Optional[int] = None) -> List[sqlite3.Row]:
-    query = "SELECT * FROM reading_rooms ORDER BY id"
-    params: Iterable[Any] = []
+def deactivate_reading_rooms_not_seen(
+    conn: sqlite3.Connection,
+    seen_at: str,
+) -> int:
+    cur = conn.execute(
+        """
+        UPDATE reading_rooms
+        SET active = 0
+        WHERE last_seen_at IS NULL OR last_seen_at != ?
+        """,
+        (seen_at,),
+    )
+    conn.commit()
+    return cur.rowcount
+
+
+def list_reading_rooms(
+    conn: sqlite3.Connection,
+    limit: Optional[int] = None,
+    active_only: bool = True,
+) -> List[sqlite3.Row]:
+    query = "SELECT * FROM reading_rooms"
+    params: List[Any] = []
+    if active_only:
+        query += " WHERE active = 1"
+    query += " ORDER BY id"
     if limit:
         query += " LIMIT ?"
-        params = [limit]
+        params.append(limit)
     cur = conn.execute(query, params)
     return cur.fetchall()
 
@@ -285,9 +352,44 @@ def update_download_failure(
     conn.commit()
 
 
-def update_reading_room_crawled(conn: sqlite3.Connection, rr_id: int, timestamp: str) -> None:
+def record_reading_room_crawl_success(
+    conn: sqlite3.Connection,
+    rr_id: int,
+    timestamp: str,
+) -> None:
     conn.execute(
-        "UPDATE reading_rooms SET last_crawled_at = ? WHERE id = ?",
-        (timestamp, rr_id),
+        """
+        UPDATE reading_rooms
+        SET last_crawled_at = ?,
+            last_successful_crawl_at = ?,
+            last_error = NULL,
+            last_error_at = NULL
+        WHERE id = ?
+        """,
+        (timestamp, timestamp, rr_id),
     )
     conn.commit()
+
+
+def record_reading_room_crawl_failure(
+    conn: sqlite3.Connection,
+    rr_id: int,
+    timestamp: str,
+    error: str,
+) -> None:
+    conn.execute(
+        """
+        UPDATE reading_rooms
+        SET last_crawled_at = ?,
+            last_error = ?,
+            last_error_at = ?
+        WHERE id = ?
+        """,
+        (timestamp, error, timestamp, rr_id),
+    )
+    conn.commit()
+
+
+def update_reading_room_crawled(conn: sqlite3.Connection, rr_id: int, timestamp: str) -> None:
+    """Backward-compatible alias for a successful crawl."""
+    record_reading_room_crawl_success(conn, rr_id, timestamp)
