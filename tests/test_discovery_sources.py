@@ -379,6 +379,37 @@ class MetadataRefreshTests(unittest.TestCase):
         self.assertNotIn("https://example.gov/", rows)
         self.assertNotIn("https://example.gov/request", rows)
 
+    def test_zero_component_refresh_preserves_active_set(self):
+        conn = get_connection(self.db_path)
+        conn.execute("UPDATE reading_rooms SET active = 1")
+        conn.commit()
+        conn.close()
+
+        with (
+            patch(
+                "foia_archive.discovery.fetch_agencies",
+                return_value=self.agencies,
+            ),
+            patch(
+                "foia_archive.discovery.fetch_agency_components",
+                return_value=([], self.agencies),
+            ),
+        ):
+            refresh_metadata(self.config)
+
+        conn = get_connection(self.db_path)
+        try:
+            active = conn.execute(
+                """
+                SELECT active FROM reading_rooms
+                WHERE url = 'https://example.gov/stale'
+                """
+            ).fetchone()["active"]
+        finally:
+            conn.close()
+
+        self.assertEqual(active, 1)
+
     def test_schema_drift_returning_zero_sources_preserves_active_set(self):
         conn = get_connection(self.db_path)
         conn.execute(
