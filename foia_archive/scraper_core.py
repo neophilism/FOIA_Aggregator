@@ -744,6 +744,7 @@ def download_document(
     url: str,
     filename_hint: str,
     config: Config,
+    rate_limiter: Optional[HostRateLimiter] = None,
 ) -> DownloadResult:
     headers = {"User-Agent": config.crawler.get("user_agent", "FOIAArchiveBot/0.1")}
     files_dir = Path(config.storage.get("files_dir"))
@@ -764,14 +765,17 @@ def download_document(
                 headers=headers,
                 timeout=timeout,
                 max_redirects=max_redirects,
+                rate_limiter=rate_limiter,
             )
-            status_code = response.status_code
+            status_code = getattr(response, "status_code", 200)
             if status_code in RETRYABLE_STATUS_CODES:
                 error = f"HTTP {status_code} while downloading {final_url}"
+                headers_map = getattr(response, "headers", {}) or {}
+                retry_after = headers_map.get("Retry-After") or headers_map.get("retry-after")
                 _close_response(response)
                 response = None
                 if attempt < max_retries:
-                    _retry_sleep(attempt, backoff)
+                    _retry_sleep(attempt, backoff, retry_after)
                     continue
                 return DownloadResult(status="http_error", error=error)
 
@@ -787,12 +791,7 @@ def download_document(
                 target_path,
                 max_bytes,
             )
-            content_type = response.headers.get("Content-Type")
-            mime_type = (
-                content_type.split(";", 1)[0].strip().lower()
-                if content_type
-                else None
-            )
+            mime_type = _content_type(response) or None
             return DownloadResult(
                 status="downloaded",
                 path=target_path,
