@@ -642,10 +642,102 @@ def _stream_response_to_file(
                 pass
 
 
-def _retry_sleep(attempt: int, base_seconds: float) -> None:
-    if base_seconds <= 0:
-        return
-    time.sleep(base_seconds * (2 ** attempt))
+def _retry_sleep(
+    attempt: int,
+    base_seconds: float,
+    retry_after: Optional[str] = None,
+) -> None:
+    delay = max(0.0, float(base_seconds)) * (2 ** attempt)
+    if retry_after:
+        try:
+            delay = max(delay, float(retry_after))
+        except ValueError:
+            pass
+    if delay > 0:
+        time.sleep(delay)
+
+
+def _read_limited_text(response, max_bytes: int) -> str:
+    headers = getattr(response, "headers", {}) or {}
+    content_length = headers.get("Content-Length") or headers.get("content-length")
+    if content_length:
+        try:
+            declared = int(content_length)
+        except ValueError:
+            declared = None
+        if declared is not None and declared > max_bytes:
+            raise FileTooLarge(
+                f"Page Content-Length {declared} exceeds {max_bytes} bytes"
+            )
+
+    if hasattr(response, "iter_content"):
+        chunks: List[bytes] = []
+        size = 0
+        for chunk in response.iter_content(chunk_size=PAGE_CHUNK_SIZE):
+            if not chunk:
+                continue
+            size += len(chunk)
+            if size > max_bytes:
+                raise FileTooLarge(f"Page exceeded {max_bytes} bytes")
+            chunks.append(chunk)
+        raw = b"".join(chunks)
+        encoding = getattr(response, "encoding", None) or "utf-8"
+        return raw.decode(encoding, errors="replace")
+
+    text_value = getattr(response, "text", "") or ""
+    if len(text_value.encode("utf-8")) > max_bytes:
+        raise FileTooLarge(f"Page exceeded {max_bytes} bytes")
+    return text_value
+
+
+def _fetch_crawl_resource(
+    url: str,
+    config: Config,
+    rate_limiter: HostRateLimiter,
+):
+    headers = {"User-Agent": config.crawler.get("user_agent", "FOIAArchiveBot/0.1")}
+    timeout = float(config.crawler.get("page_timeout_seconds", 30))
+    max_redirects = int(config.downloader.get("max_redirects", 5))
+    max_retries = int(config.downloader.get("max_retries", 3))
+    backoff = float(config.downloader.get("retry_backoff_seconds", 1))
+
+    for attempt in range(max_retries + 1):
+        response = None
+        try:
+            response, final_url = _request_with_safe_redirects(
+                url,
+                headers=headers,
+                timeout=timeout,
+                max_redirects=max_redirects,
+                rate_limiter=rate_limiter,
+            )
+            status_code = getattr(response, "status_code", 200)
+            if status_code in RETRYABLE_STATUS_CODES:
+                headers_map = getattr(response, "headers", {}) or {}
+                retry_after = headers_map.get("Retry-After") or headers_map.get("retry-after")
+                _close_response(response)
+                response = None
+                if attempt < max_retries:
+                    _retry_sleep(attempt, backoff, retry_after)
+                    continue
+                raise requests.HTTPError(
+                    f"HTTP {status_code} while crawling {final_url}"
+                )
+            if not 200 <= status_code < 300:
+                raise requests.HTTPError(
+                    f"HTTP {status_code} while crawling {final_url}"
+                )
+            return response, final_url
+        except (UnsafeURL, FileTooLarge):
+            raise
+        except (requests.RequestException, socket.gaierror):
+            if response is not None:
+                _close_response(response)
+                response = None
+            if attempt < max_retries:
+                _retry_sleep(attempt, backoff)
+                continue
+            raise
 
 
 def download_document(
