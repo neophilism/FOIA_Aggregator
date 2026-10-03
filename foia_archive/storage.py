@@ -31,6 +31,22 @@ def init_db(db_path: Path | str, files_dir: Path | str) -> None:
     cur.execute(models.OFFICES_TABLE)
     cur.execute(models.READING_ROOMS_TABLE)
     cur.execute(models.DOCUMENTS_TABLE)
+    existing_columns = {
+        row["name"] for row in conn.execute("PRAGMA table_info(documents)").fetchall()
+    }
+    for column, definition in models.DOCUMENTS_ADDITIONAL_COLUMNS.items():
+        if column not in existing_columns:
+            conn.execute(f"ALTER TABLE documents ADD COLUMN {column} {definition}")
+    conn.execute(
+        """
+        UPDATE documents
+        SET download_status = CASE
+            WHEN local_path IS NOT NULL AND local_path != '' THEN 'downloaded'
+            ELSE 'pending'
+        END
+        WHERE download_status IS NULL OR download_status = ''
+        """
+    )
     conn.commit()
     conn.close()
 
@@ -207,10 +223,52 @@ def update_download_metadata(
     document_id: int,
     local_path: str,
     downloaded_at: str,
+    mime_type: Optional[str] = None,
+    file_size: Optional[int] = None,
+    sha256: Optional[str] = None,
 ):
     conn.execute(
-        "UPDATE documents SET local_path = ?, downloaded_at = ? WHERE id = ?",
-        (local_path, downloaded_at, document_id),
+        """
+        UPDATE documents
+        SET local_path = ?,
+            downloaded_at = ?,
+            mime_type = ?,
+            file_size = ?,
+            sha256 = ?,
+            download_status = 'downloaded',
+            download_error = NULL,
+            last_download_attempt_at = ?
+        WHERE id = ?
+        """,
+        (
+            local_path,
+            downloaded_at,
+            mime_type,
+            file_size,
+            sha256,
+            downloaded_at,
+            document_id,
+        ),
+    )
+    conn.commit()
+
+
+def update_download_failure(
+    conn: sqlite3.Connection,
+    document_id: int,
+    status: str,
+    error: str,
+    attempted_at: str,
+) -> None:
+    conn.execute(
+        """
+        UPDATE documents
+        SET download_status = ?,
+            download_error = ?,
+            last_download_attempt_at = ?
+        WHERE id = ?
+        """,
+        (status, error, attempted_at, document_id),
     )
     conn.commit()
 
