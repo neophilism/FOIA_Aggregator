@@ -2,7 +2,13 @@ crawler:
   dry_run: true
   max_docs_per_source: 10
   interval_hours: 6
-  user_agent: "FOIAArchiveBot/0.1 (contact@example.com)"
+  max_pages_per_source: 50
+  max_depth: 3
+  max_discovered_docs_per_source: 1000
+  page_timeout_seconds: 30
+  page_max_size_mb: 5
+  per_host_delay_seconds: 0.5
+  user_agent: "FOIAArchiveBot/0.1 (+https://github.com/neophilism/FOIA_Aggregator)"
 
 foia_hub:
   base_url: "https://api.foia.gov/api"
