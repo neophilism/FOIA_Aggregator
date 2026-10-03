@@ -11,6 +11,7 @@
         th { background: #f4f4f4; text-align: left; }
         .filters { display: flex; gap: 10px; flex-wrap: wrap; }
         .filters label { display: block; font-weight: bold; }
+        .hint { color: #555; font-size: 0.9em; margin: 8px 0 0; }
     </style>
 </head>
 <body>
@@ -53,6 +54,7 @@
             <input type="date" id="end_date" name="end_date" value="{{ end_date or '' }}">
         </div>
     </div>
+    <p class="hint">Published-date filters match only records with a known published date. Undated records remain visible when no date filter is set.</p>
     <div style="margin-top: 10px;">
         <button type="submit">Search</button>
     </div>
@@ -77,7 +79,7 @@
             <td>{{ doc.agency_name or '—' }}</td>
             <td>{{ doc.office_name or '—' }}</td>
             <td>{{ doc.file_type or 'unknown' }}</td>
-            <td>{{ doc.published_date or '—' }}</td>
+            <td>{{ doc.published_date or 'Unknown' }}</td>
             <td>{{ doc.discovered_at or '—' }}</td>
             <td>
                 {% if doc.local_path %}<a href="/files/{{ doc.local_path }}" target="_blank">Download</a>{% endif %}

@@ -4,7 +4,7 @@ from __future__ import annotations
 import hashlib
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import List, Optional, TypedDict
 from urllib.parse import urljoin, urlparse
 
 import requests
@@ -15,6 +15,7 @@ from .storage import (
     get_connection,
     insert_document,
     list_reading_rooms,
+    update_document_published_date_if_missing,
     update_download_metadata,
     update_reading_room_crawled,
 )
@@ -22,6 +23,170 @@ from .utils import Config, clean_filename, logger
 
 
 ALLOWED_EXTENSIONS = {"pdf", "doc", "docx", "xls", "xlsx", "zip"}
+PUBLISHED_DATE_ATTRS = (
+    "data-published-date",
+    "data-publication-date",
+    "data-release-date",
+)
+PUBLISHED_DATE_HEADERS = {
+    "date published",
+    "date released",
+    "publication date",
+    "published",
+    "published date",
+    "release date",
+    "released",
+}
+DATE_FORMATS = (
+    "%m/%d/%Y",
+    "%m/%d/%y",
+    "%Y/%m/%d",
+    "%B %d, %Y",
+    "%b %d, %Y",
+    "%B %d %Y",
+    "%b %d %Y",
+)
+
+
+class DocumentLink(TypedDict):
+    url: str
+    title: str
+    published_date: Optional[str]
+
+
+def _normalize_published_date(value: str) -> Optional[str]:
+    """Normalize an explicitly supplied publication date to YYYY-MM-DD."""
+    value = " ".join((value or "").split()).strip()
+    if not value:
+        return None
+
+    iso_value = value[:-1] + "+00:00" if value.endswith("Z") else value
+    try:
+        return datetime.fromisoformat(iso_value).date().isoformat()
+    except ValueError:
+        pass
+
+    for fmt in DATE_FORMATS:
+        try:
+            return datetime.strptime(value, fmt).date().isoformat()
+        except ValueError:
+            continue
+    return None
+
+
+def _explicit_date_attribute(tag) -> Optional[str]:
+    for attr in PUBLISHED_DATE_ATTRS:
+        raw_value = tag.get(attr)
+        if isinstance(raw_value, str):
+            normalized = _normalize_published_date(raw_value)
+            if normalized:
+                return normalized
+    return None
+
+
+def _published_date_from_table(anchor) -> Optional[str]:
+    row = anchor.find_parent("tr")
+    if row is None:
+        return None
+    table = row.find_parent("table")
+    if table is None:
+        return None
+
+    rows = table.find_all("tr")
+    try:
+        row_index = rows.index(row)
+    except ValueError:
+        return None
+
+    header_cells = None
+    thead = table.find("thead")
+    if thead is not None:
+        header_rows = thead.find_all("tr")
+        if header_rows:
+            header_cells = header_rows[-1].find_all(["th", "td"], recursive=False)
+    if not header_cells:
+        for candidate in reversed(rows[:row_index]):
+            candidate_cells = candidate.find_all(["th", "td"], recursive=False)
+            header_count = len(candidate.find_all("th", recursive=False))
+            if candidate_cells and header_count == len(candidate_cells):
+                header_cells = candidate_cells
+                break
+    if not header_cells:
+        return None
+
+    cells = row.find_all(["th", "td"], recursive=False)
+    for index, header in enumerate(header_cells):
+        label = " ".join(header.get_text(" ", strip=True).lower().rstrip(":").split())
+        if label not in PUBLISHED_DATE_HEADERS or index >= len(cells):
+            continue
+        cell = cells[index]
+        time_tag = cell.find("time")
+        if time_tag is not None:
+            normalized = _normalize_published_date(
+                time_tag.get("datetime") or time_tag.get_text(" ", strip=True)
+            )
+            if normalized:
+                return normalized
+        return _normalize_published_date(cell.get_text(" ", strip=True))
+    return None
+
+
+def _is_publication_time(time_tag) -> bool:
+    itemprop = (time_tag.get("itemprop") or "").lower()
+    if itemprop == "datepublished":
+        return True
+    marker = " ".join(
+        [
+            time_tag.get("id") or "",
+            " ".join(time_tag.get("class") or []),
+            time_tag.get("title") or "",
+            time_tag.get("aria-label") or "",
+        ]
+    ).lower()
+    return any(token in marker for token in ("publish", "publication", "release", "released"))
+
+
+def _published_date_from_context(anchor) -> Optional[str]:
+    direct = _explicit_date_attribute(anchor)
+    if direct:
+        return direct
+
+    table_date = _published_date_from_table(anchor)
+    if table_date:
+        return table_date
+
+    container = anchor.find_parent(["tr", "li", "article"])
+    if container is None:
+        return None
+
+    direct = _explicit_date_attribute(container)
+    if direct:
+        return direct
+
+    candidates = []
+    for node in container.find_all(True):
+        candidate = _explicit_date_attribute(node)
+        if candidate:
+            candidates.append(candidate)
+    unique_candidates = set(candidates)
+    if len(unique_candidates) == 1:
+        return next(iter(unique_candidates))
+    if len(unique_candidates) > 1:
+        return None
+
+    time_candidates = []
+    for time_tag in container.find_all("time"):
+        if not _is_publication_time(time_tag):
+            continue
+        candidate = _normalize_published_date(
+            time_tag.get("datetime") or time_tag.get_text(" ", strip=True)
+        )
+        if candidate:
+            time_candidates.append(candidate)
+    unique_time_candidates = set(time_candidates)
+    if len(unique_time_candidates) == 1:
+        return next(iter(unique_time_candidates))
+    return None
 
 
 def get_reading_rooms_to_crawl(config: Config, limit: Optional[int] = None):
@@ -31,9 +196,9 @@ def get_reading_rooms_to_crawl(config: Config, limit: Optional[int] = None):
     return rooms
 
 
-def extract_document_links(html: str, base_url: str) -> List[Dict[str, str]]:
+def extract_document_links(html: str, base_url: str) -> List[DocumentLink]:
     soup = BeautifulSoup(html, "html.parser")
-    links: List[Dict[str, str]] = []
+    links: List[DocumentLink] = []
     for tag in soup.find_all("a", href=True):
         href = tag.get("href")
         if not href:
@@ -42,10 +207,13 @@ def extract_document_links(html: str, base_url: str) -> List[Dict[str, str]]:
         path = urlparse(absolute_url).path
         ext = path.split(".")[-1].lower() if "." in path else ""
         if ext in ALLOWED_EXTENSIONS:
-            links.append({
-                "url": absolute_url,
-                "title": tag.get_text(strip=True) or href,
-            })
+            links.append(
+                {
+                    "url": absolute_url,
+                    "title": tag.get_text(strip=True) or href,
+                    "published_date": _published_date_from_context(tag),
+                }
+            )
     return links
 
 
@@ -103,11 +271,13 @@ def crawl_reading_room(rr_id: int, config: Config, dry_run: bool, max_docs: Opti
     for link in links:
         url = link["url"]
         title = link.get("title") or url
+        published_date = link.get("published_date")
         path = urlparse(url).path
         ext = path.split(".")[-1].lower() if "." in path else ""
         filename_hint = path.split("/")[-1] or "document"
 
         if document_exists(conn, url):
+            update_document_published_date_if_missing(conn, url, published_date)
             continue
 
         if dry_run and max_docs is not None and downloaded >= max_docs:
@@ -125,6 +295,7 @@ def crawl_reading_room(rr_id: int, config: Config, dry_run: bool, max_docs: Opti
             office_id=rr["office_id"],
             reading_room_id=rr_id,
             discovered_at=discovered_at,
+            published_date=published_date,
         )
 
         if not dry_run:

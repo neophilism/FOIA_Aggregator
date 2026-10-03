@@ -132,6 +132,72 @@ def insert_document(
     return cur.lastrowid
 
 
+
+def update_document_published_date_if_missing(
+    conn: sqlite3.Connection,
+    url: str,
+    published_date: Optional[str],
+) -> bool:
+    """Fill an unknown publication date without replacing existing metadata."""
+    if not published_date:
+        return False
+    cur = conn.execute(
+        """
+        UPDATE documents
+        SET published_date = ?
+        WHERE url = ? AND (published_date IS NULL OR published_date = '')
+        """,
+        (published_date, url),
+    )
+    conn.commit()
+    return cur.rowcount > 0
+
+
+def query_documents(
+    conn: sqlite3.Connection,
+    agency_id: Optional[int] = None,
+    office_id: Optional[int] = None,
+    file_type: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+) -> List[sqlite3.Row]:
+    """Return documents matching UI filters.
+
+    Unknown publication dates remain visible when no publication-date bound is
+    supplied. If either date bound is supplied, unknown dates are intentionally
+    excluded because they cannot be known to satisfy the requested interval.
+    """
+    query = [
+        "SELECT d.id, d.title, d.file_type, d.published_date, d.discovered_at, d.local_path, d.url,",
+        "       a.name AS agency_name, o.name AS office_name",
+        "FROM documents d",
+        "LEFT JOIN agencies a ON d.agency_id = a.id",
+        "LEFT JOIN offices o ON d.office_id = o.id",
+        "WHERE 1=1",
+    ]
+    params: List[Any] = []
+
+    if agency_id:
+        query.append("AND d.agency_id = ?")
+        params.append(agency_id)
+    if office_id:
+        query.append("AND d.office_id = ?")
+        params.append(office_id)
+    if file_type:
+        query.append("AND d.file_type = ?")
+        params.append(file_type)
+    if start_date or end_date:
+        query.append("AND d.published_date IS NOT NULL AND d.published_date != ''")
+    if start_date:
+        query.append("AND d.published_date >= ?")
+        params.append(start_date)
+    if end_date:
+        query.append("AND d.published_date <= ?")
+        params.append(end_date)
+
+    query.append("ORDER BY d.discovered_at DESC LIMIT 200")
+    return conn.execute("\n".join(query), params).fetchall()
+
 def update_download_metadata(
     conn: sqlite3.Connection,
     document_id: int,
