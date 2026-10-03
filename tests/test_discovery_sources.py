@@ -467,6 +467,10 @@ class ReadingRoomCrawlHealthTests(unittest.TestCase):
         self.config = Config(
             {
                 "crawler": {"user_agent": "FOIAArchiveTest/1.0"},
+                "downloader": {
+                    "max_retries": 0,
+                    "retry_backoff_seconds": 0,
+                },
                 "storage": {
                     "db_path": str(self.db_path),
                     "files_dir": str(self.files_dir),
