@@ -270,7 +270,12 @@ def update_download_failure(
     conn.execute(
         """
         UPDATE documents
-        SET download_status = ?,
+        SET local_path = NULL,
+            downloaded_at = NULL,
+            mime_type = NULL,
+            file_size = NULL,
+            sha256 = NULL,
+            download_status = ?,
             download_error = ?,
             last_download_attempt_at = ?
         WHERE id = ?
