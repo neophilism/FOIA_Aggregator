@@ -266,7 +266,11 @@ def refresh_metadata(config: Config) -> None:
             )
             seen_source_count += 1
 
-    if components and seen_source_count == 0:
+    if not components:
+        logger.warning(
+            "FOIA metadata refresh returned zero components; preserving the existing active source set"
+        )
+    elif seen_source_count == 0:
         logger.warning(
             "FOIA metadata refresh returned components but no recognized publication-source fields; preserving the existing active source set"
         )
