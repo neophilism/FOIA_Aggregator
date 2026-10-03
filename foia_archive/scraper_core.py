@@ -29,7 +29,6 @@ PUBLISHED_DATE_ATTRS = (
     "data-release-date",
 )
 PUBLISHED_DATE_HEADERS = {
-    "date",
     "date published",
     "date released",
     "publication date",
