@@ -4,14 +4,17 @@ from __future__ import annotations
 import hashlib
 import ipaddress
 import os
+import posixpath
+import re
 import socket
 import tempfile
 import time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, TypedDict
-from urllib.parse import urljoin, urlparse
+from typing import Deque, Dict, List, Optional, Set, TypedDict
+from urllib.parse import unquote, urljoin, urlparse, urlunparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -30,7 +33,42 @@ from .storage import (
 from .utils import Config, clean_filename, logger
 
 
-ALLOWED_EXTENSIONS = {"pdf", "doc", "docx", "xls", "xlsx", "zip"}
+ALLOWED_EXTENSIONS = {
+    "pdf", "doc", "docx", "xls", "xlsx", "csv", "txt", "rtf",
+    "ppt", "pptx", "zip", "xml", "json", "eml", "msg",
+    "tif", "tiff", "jpg", "jpeg", "png", "mp3", "wav", "mp4", "mov",
+}
+DOCUMENT_MIME_TYPES = {
+    "application/pdf": "pdf",
+    "application/msword": "doc",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": "docx",
+    "application/vnd.ms-excel": "xls",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": "xlsx",
+    "text/csv": "csv",
+    "text/plain": "txt",
+    "application/rtf": "rtf",
+    "text/rtf": "rtf",
+    "application/vnd.ms-powerpoint": "ppt",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": "pptx",
+    "application/zip": "zip",
+    "application/x-zip-compressed": "zip",
+    "application/xml": "xml",
+    "text/xml": "xml",
+    "application/json": "json",
+    "message/rfc822": "eml",
+    "image/tiff": "tiff",
+    "image/jpeg": "jpg",
+    "image/png": "png",
+    "audio/mpeg": "mp3",
+    "audio/wav": "wav",
+    "audio/x-wav": "wav",
+    "video/mp4": "mp4",
+    "video/quicktime": "mov",
+}
+HTML_MIME_TYPES = {"text/html", "application/xhtml+xml"}
+SKIP_CRAWL_EXTENSIONS = {
+    "css", "js", "ico", "svg", "woff", "woff2", "ttf", "eot",
+}
 PUBLISHED_DATE_ATTRS = (
     "data-published-date",
     "data-publication-date",
@@ -57,6 +95,7 @@ DATE_FORMATS = (
 REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 DOWNLOAD_CHUNK_SIZE = 64 * 1024
+PAGE_CHUNK_SIZE = 64 * 1024
 
 
 class UnsafeURL(ValueError):
@@ -81,6 +120,43 @@ class DocumentLink(TypedDict):
     url: str
     title: str
     published_date: Optional[str]
+    file_type: str
+
+
+@dataclass(frozen=True)
+class CrawlTarget:
+    url: str
+    depth: int
+    title: str
+    published_date: Optional[str] = None
+
+
+@dataclass(frozen=True)
+class CrawlScope:
+    hostname: str
+    port: Optional[int]
+    path_prefix: str
+
+
+class HostRateLimiter:
+    """Apply a minimum delay between requests to the same host."""
+
+    def __init__(self, delay_seconds: float):
+        self.delay_seconds = max(0.0, float(delay_seconds))
+        self._last_request: Dict[str, float] = {}
+
+    def wait(self, url: str) -> None:
+        if self.delay_seconds <= 0:
+            return
+        parsed = urlparse(url)
+        key = parsed.netloc.lower()
+        now = time.monotonic()
+        last = self._last_request.get(key)
+        if last is not None:
+            remaining = self.delay_seconds - (now - last)
+            if remaining > 0:
+                time.sleep(remaining)
+        self._last_request[key] = time.monotonic()
 
 
 def _normalize_published_date(value: str) -> Optional[str]:
