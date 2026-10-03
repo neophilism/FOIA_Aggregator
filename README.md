@@ -20,13 +20,13 @@ export FOIA_API_KEY="MY_KEY"
 
 ## CLI Usage
 
-Run a single crawl (dry-run defaults to limiting downloads to the configured maximum per reading room):
+Run a discovery-only crawl. Dry-run records discovered document metadata without downloading files and limits newly discovered documents per reading room:
 
 ```bash
 python main.py run --dry-run true --max-docs-per-source 10
 ```
 
-Disable the dry-run cap:
+Run a live crawl to download documents. Documents previously discovered during a dry run remain eligible for download:
 
 ```bash
 python main.py run --dry-run false
