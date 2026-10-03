@@ -1008,6 +1008,9 @@ def crawl_reading_room(
             file_type = _document_type_from_response(response, final_url)
             if file_type:
                 if final_url not in seen_documents:
+                    if dry_run and max_docs is not None and new_documents >= max_docs:
+                        logger.info("Dry run document limit reached for %s", rr["url"])
+                        break
                     if len(seen_documents) >= max_discovered_docs:
                         stop_for_document_limit = True
                         break
@@ -1063,6 +1066,10 @@ def crawl_reading_room(
             url = link["url"]
             if url in seen_documents:
                 continue
+            if dry_run and max_docs is not None and new_documents >= max_docs:
+                logger.info("Dry run document limit reached for %s", rr["url"])
+                stop_for_document_limit = True
+                break
             if len(seen_documents) >= max_discovered_docs:
                 stop_for_document_limit = True
                 break
