@@ -831,7 +831,100 @@ def download_document(
     )
 
 
-def crawl_reading_room(rr_id: int, config: Config, dry_run: bool, max_docs: Optional[int]) -> None:
+def _process_document_candidate(
+    conn,
+    rr,
+    url: str,
+    title: str,
+    published_date: Optional[str],
+    file_type: str,
+    config: Config,
+    dry_run: bool,
+    rate_limiter: HostRateLimiter,
+) -> bool:
+    """Persist/download one document candidate. Return True when newly discovered."""
+    canonical = canonicalize_url(url)
+    if not canonical:
+        return False
+
+    existing = get_document_by_url(conn, canonical)
+    is_new = existing is None
+    filename_hint = _filename_hint(canonical, title, file_type)
+
+    if existing:
+        update_document_published_date_if_missing(conn, canonical, published_date)
+        doc_id = existing["id"]
+        if existing["local_path"]:
+            files_dir = Path(config.storage.get("files_dir"))
+            archived_path = files_dir / existing["local_path"]
+            if archived_path.is_file():
+                return False
+            logger.warning(
+                "Stored file missing for %s; retrying download",
+                canonical,
+            )
+    else:
+        doc_id = insert_document(
+            conn,
+            url=canonical,
+            title=title or canonical,
+            file_type=file_type,
+            filename=filename_hint,
+            agency_id=rr["agency_id"],
+            office_id=rr["office_id"],
+            reading_room_id=rr["id"],
+            discovered_at=datetime.utcnow().isoformat(),
+            published_date=published_date,
+        )
+
+    if dry_run:
+        return is_new
+
+    result = download_document(
+        canonical,
+        filename_hint,
+        config,
+        rate_limiter=rate_limiter,
+    )
+    if isinstance(result, Path):
+        result = DownloadResult(status="downloaded", path=result)
+    elif result is None:
+        result = DownloadResult(
+            status="retryable_error",
+            error="Download failed",
+        )
+
+    attempted_at = datetime.utcnow().isoformat()
+    if result.status == "downloaded" and result.path is not None:
+        files_dir = Path(config.storage.get("files_dir"))
+        stored_path = result.path.relative_to(files_dir)
+        update_download_metadata(
+            conn,
+            doc_id,
+            stored_path.as_posix(),
+            attempted_at,
+            mime_type=result.mime_type,
+            file_size=result.file_size,
+            sha256=result.sha256,
+        )
+    else:
+        update_download_failure(
+            conn,
+            doc_id,
+            result.status,
+            result.error or "Download failed",
+            attempted_at,
+        )
+    return is_new
+
+
+def crawl_reading_room(
+    rr_id: int,
+    config: Config,
+    dry_run: bool,
+    max_docs: Optional[int],
+    rate_limiter: Optional[HostRateLimiter] = None,
+) -> None:
     conn = get_connection(config.storage.get("db_path"))
     rr = conn.execute(
         "SELECT * FROM reading_rooms WHERE id = ?",
@@ -842,102 +935,185 @@ def crawl_reading_room(rr_id: int, config: Config, dry_run: bool, max_docs: Opti
         conn.close()
         return
 
-    headers = {"User-Agent": config.crawler.get("user_agent", "FOIAArchiveBot/0.1")}
-    try:
-        resp = requests.get(rr["url"], headers=headers, timeout=60)
-        resp.raise_for_status()
-    except Exception as exc:  # noqa: BLE001
+    root_url = canonicalize_url(rr["url"])
+    if not root_url:
         attempted_at = datetime.utcnow().isoformat()
-        error = f"{type(exc).__name__}: {exc}"[:2000]
-        logger.warning("Failed to fetch reading room %s: %s", rr["url"], exc)
         record_reading_room_crawl_failure(
             conn,
             rr_id,
             attempted_at,
-            error,
+            "Unsafe or invalid reading room URL",
         )
         conn.close()
         return
 
-    links = extract_document_links(resp.text, rr["url"])
-    logger.info("Found %s candidate documents at %s", len(links), rr["url"])
+    if rate_limiter is None:
+        rate_limiter = HostRateLimiter(
+            float(config.crawler.get("per_host_delay_seconds", 0))
+        )
 
-    downloaded = 0
-    for link in links:
-        url = link["url"]
-        title = link.get("title") or url
-        published_date = link.get("published_date")
-        path = urlparse(url).path
-        ext = path.split(".")[-1].lower() if "." in path else ""
-        filename_hint = path.split("/")[-1] or "document"
+    max_pages = max(1, int(config.crawler.get("max_pages_per_source", 50)))
+    max_depth = max(0, int(config.crawler.get("max_depth", 3)))
+    max_discovered_docs = max(
+        1,
+        int(config.crawler.get("max_discovered_docs_per_source", 1000)),
+    )
+    page_max_bytes = max(
+        1,
+        int(float(config.crawler.get("page_max_size_mb", 5)) * 1024 * 1024),
+    )
 
-        existing = get_document_by_url(conn, url)
-        if existing:
-            update_document_published_date_if_missing(conn, url, published_date)
-            doc_id = existing["id"]
-            if existing["local_path"]:
-                files_dir = Path(config.storage.get("files_dir"))
-                archived_path = files_dir / existing["local_path"]
-                if archived_path.is_file():
-                    continue
-                logger.warning(
-                    "Stored file missing for %s; retrying download",
-                    url,
+    frontier: Deque[CrawlTarget] = deque(
+        [
+            CrawlTarget(
+                url=root_url,
+                depth=0,
+                title=rr["label"] or root_url,
+            )
+        ]
+    )
+    queued_pages: Set[str] = {root_url}
+    seen_pages: Set[str] = set()
+    seen_documents: Set[str] = set()
+    scope: Optional[CrawlScope] = None
+    pages_fetched = 0
+    new_documents = 0
+    stop_for_document_limit = False
+
+    while frontier and pages_fetched < max_pages and not stop_for_document_limit:
+        target = frontier.popleft()
+        if target.depth > max_depth or target.url in seen_pages:
+            continue
+        seen_pages.add(target.url)
+
+        response = None
+        try:
+            response, final_url = _fetch_crawl_resource(
+                target.url,
+                config,
+                rate_limiter,
+            )
+            final_url = canonicalize_url(final_url) or target.url
+
+            if target.depth == 0:
+                scope = _crawl_scope(final_url)
+            elif scope is not None and not _url_in_scope(final_url, scope):
+                logger.info(
+                    "Skipping redirect outside reading-room scope: %s",
+                    final_url,
                 )
-        else:
-            if dry_run and max_docs is not None and downloaded >= max_docs:
-                logger.info("Dry run limit reached for %s", rr["url"])
+                continue
+
+            pages_fetched += 1
+            file_type = _document_type_from_response(response, final_url)
+            if file_type:
+                if final_url not in seen_documents:
+                    if len(seen_documents) >= max_discovered_docs:
+                        stop_for_document_limit = True
+                        break
+                    seen_documents.add(final_url)
+                    is_new = _process_document_candidate(
+                        conn,
+                        rr,
+                        final_url,
+                        target.title,
+                        target.published_date,
+                        file_type,
+                        config,
+                        dry_run,
+                        rate_limiter,
+                    )
+                    if is_new:
+                        new_documents += 1
+                if dry_run and max_docs is not None and new_documents >= max_docs:
+                    logger.info("Dry run document limit reached for %s", rr["url"])
+                    break
+                continue
+
+            mime_type = _content_type(response)
+            if mime_type and mime_type not in HTML_MIME_TYPES:
+                logger.info(
+                    "Skipping unsupported crawl response %s (%s)",
+                    final_url,
+                    mime_type,
+                )
+                continue
+
+            html = _read_limited_text(response, page_max_bytes)
+        except Exception as exc:  # noqa: BLE001
+            if target.depth == 0:
+                attempted_at = datetime.utcnow().isoformat()
+                error = f"{type(exc).__name__}: {exc}"[:2000]
+                logger.warning("Failed to fetch reading room %s: %s", rr["url"], exc)
+                record_reading_room_crawl_failure(
+                    conn,
+                    rr_id,
+                    attempted_at,
+                    error,
+                )
+                conn.close()
+                return
+            logger.warning("Failed to crawl %s: %s", target.url, exc)
+            continue
+        finally:
+            if response is not None:
+                _close_response(response)
+
+        for link in extract_document_links(html, final_url):
+            url = link["url"]
+            if url in seen_documents:
+                continue
+            if len(seen_documents) >= max_discovered_docs:
+                stop_for_document_limit = True
                 break
 
-            discovered_at = datetime.utcnow().isoformat()
-            doc_id = insert_document(
+            seen_documents.add(url)
+            is_new = _process_document_candidate(
                 conn,
-                url=url,
-                title=title,
-                file_type=ext,
-                filename=filename_hint,
-                agency_id=rr["agency_id"],
-                office_id=rr["office_id"],
-                reading_room_id=rr_id,
-                discovered_at=discovered_at,
-                published_date=published_date,
+                rr,
+                url,
+                link.get("title") or url,
+                link.get("published_date"),
+                link["file_type"],
+                config,
+                dry_run,
+                rate_limiter,
             )
+            if is_new:
+                new_documents += 1
+            if dry_run and max_docs is not None and new_documents >= max_docs:
+                logger.info("Dry run document limit reached for %s", rr["url"])
+                stop_for_document_limit = True
+                break
 
-        if dry_run:
-            downloaded += 1
+        if stop_for_document_limit or target.depth >= max_depth or scope is None:
             continue
 
-        result = download_document(url, filename_hint, config)
-        if isinstance(result, Path):
-            result = DownloadResult(status="downloaded", path=result)
-        elif result is None:
-            result = DownloadResult(
-                status="retryable_error",
-                error="Download failed",
-            )
+        for crawl_target in extract_crawl_targets(
+            html,
+            final_url,
+            scope,
+            target.depth + 1,
+        ):
+            if crawl_target.url in seen_pages or crawl_target.url in queued_pages:
+                continue
+            if len(queued_pages) >= max_pages:
+                break
+            queued_pages.add(crawl_target.url)
+            frontier.append(crawl_target)
 
-        attempted_at = datetime.utcnow().isoformat()
-        if result.status == "downloaded" and result.path is not None:
-            files_dir = Path(config.storage.get("files_dir"))
-            stored_path = result.path.relative_to(files_dir)
-            update_download_metadata(
-                conn,
-                doc_id,
-                stored_path.as_posix(),
-                attempted_at,
-                mime_type=result.mime_type,
-                file_size=result.file_size,
-                sha256=result.sha256,
-            )
-        else:
-            update_download_failure(
-                conn,
-                doc_id,
-                result.status,
-                result.error or "Download failed",
-                attempted_at,
-            )
-        downloaded += 1
+    if pages_fetched >= max_pages and frontier:
+        logger.info(
+            "Page limit reached for %s after %s fetched resources",
+            rr["url"],
+            pages_fetched,
+        )
+    if stop_for_document_limit:
+        logger.info(
+            "Document safety limit reached for %s after %s unique candidates",
+            rr["url"],
+            len(seen_documents),
+        )
 
     record_reading_room_crawl_success(
         conn,
