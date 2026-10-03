@@ -353,6 +353,55 @@ class DownloadMetadataMigrationTests(unittest.TestCase):
         )
         self.assertIsNone(row["local_path"])
 
+    def test_failure_clears_stale_archive_metadata(self):
+        init_db(self.db_path, self.files_dir)
+        conn = get_connection(self.db_path)
+        try:
+            doc_id = insert_document(
+                conn,
+                url="https://example.gov/stale.pdf",
+                title="Stale",
+                file_type="pdf",
+                filename="stale.pdf",
+                agency_id=None,
+                office_id=None,
+                reading_room_id=None,
+                discovered_at="2026-01-01T00:00:00",
+            )
+            update_download_metadata(
+                conn,
+                doc_id,
+                "missing.pdf",
+                "2026-01-01T00:00:01",
+                mime_type="application/pdf",
+                file_size=10,
+                sha256="deadbeef",
+            )
+            update_download_failure(
+                conn,
+                doc_id,
+                "retryable_error",
+                "replacement failed",
+                "2026-01-01T00:00:02",
+            )
+            row = conn.execute(
+                """
+                SELECT local_path, downloaded_at, mime_type, file_size,
+                       sha256, download_status
+                FROM documents WHERE id = ?
+                """,
+                (doc_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        self.assertIsNone(row["local_path"])
+        self.assertIsNone(row["downloaded_at"])
+        self.assertIsNone(row["mime_type"])
+        self.assertIsNone(row["file_size"])
+        self.assertIsNone(row["sha256"])
+        self.assertEqual(row["download_status"], "retryable_error")
+
     def test_download_metadata_is_persisted_with_completed_status(self):
         init_db(self.db_path, self.files_dir)
         conn = get_connection(self.db_path)
