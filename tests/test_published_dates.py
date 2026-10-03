@@ -64,6 +64,18 @@ class PublishedDateExtractionTests(unittest.TestCase):
         links = extract_document_links(html, "https://example.gov/")
         self.assertEqual(links[0]["published_date"], "2023-11-02")
 
+    def test_generic_date_column_is_not_assumed_to_be_publication_date(self):
+        html = """
+        <table>
+          <thead><tr><th>Document</th><th>Date</th></tr></thead>
+          <tbody>
+            <tr><td><a href="/records/generic.pdf">Generic</a></td><td>May 6, 2024</td></tr>
+          </tbody>
+        </table>
+        """
+        links = extract_document_links(html, "https://example.gov/")
+        self.assertIsNone(links[0]["published_date"])
+
     def test_plain_nearby_date_is_not_invented_as_publication_date(self):
         html = """
         <li>
