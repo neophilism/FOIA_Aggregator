@@ -98,7 +98,7 @@ def _classify_source_field(key: str) -> str | None:
     normalized = re.sub(r"[^a-z0-9]+", "_", str(key).lower()).strip("_")
     tokens = set(normalized.split("_"))
 
-    if "reading" in tokens and "room" in tokens:
+    if "reading" in tokens and any(token.startswith("room") for token in tokens):
         return "reading_room"
     if "foia" in tokens and any(token.startswith("librar") for token in tokens):
         return "foia_library"
@@ -127,14 +127,10 @@ def _normalize_source_url(value: str) -> str | None:
     if parsed.username is not None or parsed.password is not None:
         return None
 
-    hostname = parsed.hostname.lower()
-    netloc = hostname
-    if parsed.port:
-        netloc = f"{hostname}:{parsed.port}"
     return urlunsplit(
         (
             parsed.scheme.lower(),
-            netloc,
+            parsed.netloc.lower(),
             parsed.path or "/",
             parsed.query,
             "",
@@ -220,6 +216,7 @@ def refresh_metadata(config: Config) -> None:
 
     agency_cache: Dict[str, int] = {}
     agency_lookup: Dict[str, Dict] = {a.get("id"): a for a in agencies + included_agencies}
+    seen_source_count = 0
 
     # Persist agencies up front so component handling can link to them reliably.
     for agency in agencies:
@@ -267,11 +264,17 @@ def refresh_metadata(config: Config) -> None:
                 source_type=source["source_type"],
                 seen_at=refresh_seen_at,
             )
+            seen_source_count += 1
 
-    deactivated = deactivate_reading_rooms_not_seen(conn, refresh_seen_at)
-    if deactivated:
-        logger.info(
-            "Marked %s reading room sources inactive because they were not present in the latest complete metadata refresh",
-            deactivated,
+    if components and seen_source_count == 0:
+        logger.warning(
+            "FOIA metadata refresh returned components but no recognized publication-source fields; preserving the existing active source set"
         )
+    else:
+        deactivated = deactivate_reading_rooms_not_seen(conn, refresh_seen_at)
+        if deactivated:
+            logger.info(
+                "Marked %s reading room sources inactive because they were not present in the latest complete metadata refresh",
+                deactivated,
+            )
     conn.close()
