@@ -2,6 +2,12 @@
 from __future__ import annotations
 
 import hashlib
+import ipaddress
+import os
+import socket
+import tempfile
+import time
+from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, TypedDict
@@ -16,6 +22,7 @@ from .storage import (
     insert_document,
     list_reading_rooms,
     update_document_published_date_if_missing,
+    update_download_failure,
     update_download_metadata,
     update_reading_room_crawled,
 )
@@ -46,6 +53,27 @@ DATE_FORMATS = (
     "%B %d %Y",
     "%b %d %Y",
 )
+REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
+RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
+DOWNLOAD_CHUNK_SIZE = 64 * 1024
+
+
+class UnsafeURL(ValueError):
+    """Raised when a URL can target a non-public or unsupported destination."""
+
+
+class FileTooLarge(ValueError):
+    """Raised when a download exceeds the configured archive size limit."""
+
+
+@dataclass(frozen=True)
+class DownloadResult:
+    status: str
+    path: Optional[Path] = None
+    mime_type: Optional[str] = None
+    file_size: Optional[int] = None
+    sha256: Optional[str] = None
+    error: Optional[str] = None
 
 
 class DocumentLink(TypedDict):
@@ -196,6 +224,49 @@ def get_reading_rooms_to_crawl(config: Config, limit: Optional[int] = None):
     return rooms
 
 
+def _is_http_url(url: str) -> bool:
+    try:
+        parsed = urlparse(url)
+        return (
+            parsed.scheme.lower() in {"http", "https"}
+            and bool(parsed.hostname)
+            and parsed.username is None
+            and parsed.password is None
+        )
+    except ValueError:
+        return False
+
+
+def _validate_public_destination(url: str) -> None:
+    if not _is_http_url(url):
+        raise UnsafeURL("Only credential-free HTTP(S) URLs are allowed")
+
+    parsed = urlparse(url)
+    try:
+        port = parsed.port or (443 if parsed.scheme.lower() == "https" else 80)
+    except ValueError as exc:
+        raise UnsafeURL("URL contains an invalid port") from exc
+
+    addresses = socket.getaddrinfo(
+        parsed.hostname,
+        port,
+        type=socket.SOCK_STREAM,
+    )
+    if not addresses:
+        raise socket.gaierror(f"No addresses resolved for {parsed.hostname}")
+
+    for result in addresses:
+        address = result[4][0]
+        try:
+            ip = ipaddress.ip_address(address)
+        except ValueError as exc:
+            raise UnsafeURL(f"Resolved invalid IP address: {address}") from exc
+        if not ip.is_global:
+            raise UnsafeURL(
+                f"URL resolves to a non-public address: {address}"
+            )
+
+
 def extract_document_links(html: str, base_url: str) -> List[DocumentLink]:
     soup = BeautifulSoup(html, "html.parser")
     links: List[DocumentLink] = []
@@ -204,6 +275,8 @@ def extract_document_links(html: str, base_url: str) -> List[DocumentLink]:
         if not href:
             continue
         absolute_url = urljoin(base_url, href)
+        if not _is_http_url(absolute_url):
+            continue
         path = urlparse(absolute_url).path
         ext = path.split(".")[-1].lower() if "." in path else ""
         if ext in ALLOWED_EXTENSIONS:
@@ -217,31 +290,209 @@ def extract_document_links(html: str, base_url: str) -> List[DocumentLink]:
     return links
 
 
-def _save_file(content: bytes, url: str, files_dir: Path, filename_hint: str) -> Path:
+def _archive_path(url: str, files_dir: Path, filename_hint: str) -> Path:
     parsed = urlparse(url)
     ext = parsed.path.rsplit(".", 1)[-1].lower() if "." in parsed.path else ""
     safe_name = clean_filename(filename_hint) or "document"
     if ext and not safe_name.lower().endswith(f".{ext}"):
         safe_name = f"{safe_name}.{ext}"
     digest = hashlib.sha1(url.encode("utf-8")).hexdigest()[:10]
-    filename = f"{digest}_{safe_name}"
-    path = files_dir / filename
+    return files_dir / f"{digest}_{safe_name}"
+
+
+def _save_file(content: bytes, url: str, files_dir: Path, filename_hint: str) -> Path:
+    path = _archive_path(url, files_dir, filename_hint)
     with path.open("wb") as f:
         f.write(content)
     return path
 
 
-def download_document(url: str, filename_hint: str, config: Config) -> Optional[Path]:
+def _close_response(response) -> None:
+    close = getattr(response, "close", None)
+    if callable(close):
+        close()
+
+
+def _request_with_safe_redirects(
+    url: str,
+    headers: dict,
+    timeout: float,
+    max_redirects: int,
+):
+    current_url = url
+    for redirect_count in range(max_redirects + 1):
+        _validate_public_destination(current_url)
+        response = requests.get(
+            current_url,
+            headers=headers,
+            timeout=timeout,
+            stream=True,
+            allow_redirects=False,
+        )
+        if response.status_code not in REDIRECT_STATUS_CODES:
+            return response, current_url
+
+        location = response.headers.get("Location")
+        _close_response(response)
+        if not location:
+            raise requests.HTTPError(
+                f"Redirect response from {current_url} did not include Location"
+            )
+        if redirect_count >= max_redirects:
+            raise requests.TooManyRedirects(
+                f"Exceeded {max_redirects} redirects for {url}"
+            )
+        current_url = urljoin(current_url, location)
+
+    raise requests.TooManyRedirects(f"Exceeded redirect limit for {url}")
+
+
+def _stream_response_to_file(
+    response,
+    target_path: Path,
+    max_bytes: int,
+) -> tuple[int, str]:
+    content_length = response.headers.get("Content-Length")
+    if content_length:
+        try:
+            if int(content_length) > max_bytes:
+                raise FileTooLarge(
+                    f"Content-Length {content_length} exceeds {max_bytes} bytes"
+                )
+        except ValueError:
+            pass
+
+    temp_path = None
+    size = 0
+    digest = hashlib.sha256()
+    try:
+        with tempfile.NamedTemporaryFile(
+            mode="wb",
+            dir=target_path.parent,
+            prefix=".partial-",
+            delete=False,
+        ) as temp_file:
+            temp_path = Path(temp_file.name)
+            for chunk in response.iter_content(chunk_size=DOWNLOAD_CHUNK_SIZE):
+                if not chunk:
+                    continue
+                size += len(chunk)
+                if size > max_bytes:
+                    raise FileTooLarge(
+                        f"Download exceeded {max_bytes} bytes"
+                    )
+                temp_file.write(chunk)
+                digest.update(chunk)
+            temp_file.flush()
+            os.fsync(temp_file.fileno())
+
+        os.replace(temp_path, target_path)
+        temp_path = None
+        return size, digest.hexdigest()
+    finally:
+        if temp_path is not None:
+            try:
+                temp_path.unlink()
+            except FileNotFoundError:
+                pass
+
+
+def _retry_sleep(attempt: int, base_seconds: float) -> None:
+    if base_seconds <= 0:
+        return
+    time.sleep(base_seconds * (2 ** attempt))
+
+
+def download_document(
+    url: str,
+    filename_hint: str,
+    config: Config,
+) -> DownloadResult:
     headers = {"User-Agent": config.crawler.get("user_agent", "FOIAArchiveBot/0.1")}
     files_dir = Path(config.storage.get("files_dir"))
     files_dir.mkdir(parents=True, exist_ok=True)
-    try:
-        resp = requests.get(url, headers=headers, timeout=60)
-        resp.raise_for_status()
-        return _save_file(resp.content, url, files_dir, filename_hint)
-    except Exception as exc:  # noqa: BLE001 - broad for logging
-        logger.warning("Failed to download %s: %s", url, exc)
-        return None
+
+    timeout = float(config.downloader.get("timeout_seconds", 60))
+    max_redirects = int(config.downloader.get("max_redirects", 5))
+    max_retries = int(config.downloader.get("max_retries", 3))
+    backoff = float(config.downloader.get("retry_backoff_seconds", 1))
+    max_file_size_mb = float(config.downloader.get("max_file_size_mb", 100))
+    max_bytes = max(1, int(max_file_size_mb * 1024 * 1024))
+
+    for attempt in range(max_retries + 1):
+        response = None
+        try:
+            response, final_url = _request_with_safe_redirects(
+                url,
+                headers=headers,
+                timeout=timeout,
+                max_redirects=max_redirects,
+            )
+            status_code = response.status_code
+            if status_code in RETRYABLE_STATUS_CODES:
+                error = f"HTTP {status_code} while downloading {final_url}"
+                _close_response(response)
+                response = None
+                if attempt < max_retries:
+                    _retry_sleep(attempt, backoff)
+                    continue
+                return DownloadResult(status="http_error", error=error)
+
+            if not 200 <= status_code < 300:
+                return DownloadResult(
+                    status="http_error",
+                    error=f"HTTP {status_code} while downloading {final_url}",
+                )
+
+            target_path = _archive_path(url, files_dir, filename_hint)
+            file_size, sha256 = _stream_response_to_file(
+                response,
+                target_path,
+                max_bytes,
+            )
+            content_type = response.headers.get("Content-Type")
+            mime_type = (
+                content_type.split(";", 1)[0].strip().lower()
+                if content_type
+                else None
+            )
+            return DownloadResult(
+                status="downloaded",
+                path=target_path,
+                mime_type=mime_type,
+                file_size=file_size,
+                sha256=sha256,
+            )
+        except UnsafeURL as exc:
+            return DownloadResult(status="blocked_url", error=str(exc))
+        except FileTooLarge as exc:
+            return DownloadResult(status="too_large", error=str(exc))
+        except socket.gaierror as exc:
+            if attempt < max_retries:
+                _retry_sleep(attempt, backoff)
+                continue
+            return DownloadResult(
+                status="retryable_error",
+                error=f"DNS resolution failed: {exc}",
+            )
+        except requests.RequestException as exc:
+            if attempt < max_retries:
+                _retry_sleep(attempt, backoff)
+                continue
+            return DownloadResult(
+                status="retryable_error",
+                error=str(exc),
+            )
+        except OSError as exc:
+            return DownloadResult(status="io_error", error=str(exc))
+        finally:
+            if response is not None:
+                _close_response(response)
+
+    return DownloadResult(
+        status="retryable_error",
+        error="Download attempts exhausted",
+    )
 
 
 def crawl_reading_room(rr_id: int, config: Config, dry_run: bool, max_docs: Optional[int]) -> None:
@@ -312,15 +563,35 @@ def crawl_reading_room(rr_id: int, config: Config, dry_run: bool, max_docs: Opti
             downloaded += 1
             continue
 
-        local_path = download_document(url, filename_hint, config)
-        if local_path:
+        result = download_document(url, filename_hint, config)
+        if isinstance(result, Path):
+            result = DownloadResult(status="downloaded", path=result)
+        elif result is None:
+            result = DownloadResult(
+                status="retryable_error",
+                error="Download failed",
+            )
+
+        attempted_at = datetime.utcnow().isoformat()
+        if result.status == "downloaded" and result.path is not None:
             files_dir = Path(config.storage.get("files_dir"))
-            stored_path = local_path.relative_to(files_dir)
+            stored_path = result.path.relative_to(files_dir)
             update_download_metadata(
                 conn,
                 doc_id,
                 stored_path.as_posix(),
-                datetime.utcnow().isoformat(),
+                attempted_at,
+                mime_type=result.mime_type,
+                file_size=result.file_size,
+                sha256=result.sha256,
+            )
+        else:
+            update_download_failure(
+                conn,
+                doc_id,
+                result.status,
+                result.error or "Download failed",
+                attempted_at,
             )
         downloaded += 1
 
