@@ -49,8 +49,24 @@ CREATE TABLE IF NOT EXISTS documents (
     published_date TEXT,
     discovered_at TEXT,
     downloaded_at TEXT,
+    mime_type TEXT,
+    file_size INTEGER,
+    sha256 TEXT,
+    download_status TEXT DEFAULT 'pending',
+    download_error TEXT,
+    last_download_attempt_at TEXT,
     FOREIGN KEY (agency_id) REFERENCES agencies(id),
     FOREIGN KEY (office_id) REFERENCES offices(id),
     FOREIGN KEY (reading_room_id) REFERENCES reading_rooms(id)
 );
 """
+
+
+DOCUMENTS_ADDITIONAL_COLUMNS = {
+    "mime_type": "TEXT",
+    "file_size": "INTEGER",
+    "sha256": "TEXT",
+    "download_status": "TEXT DEFAULT 'pending'",
+    "download_error": "TEXT",
+    "last_download_attempt_at": "TEXT",
+}

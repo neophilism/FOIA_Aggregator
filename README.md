@@ -38,6 +38,12 @@ Continuous mode:
 python main.py daemon
 ```
 
+## Download safety
+
+Document downloads are limited to public HTTP(S) destinations. Redirects are revalidated, private/loopback/link-local destinations are rejected, files are streamed to temporary files before atomic placement in the archive, and configurable size/retry limits live under `downloader` in `config/settings.yaml`.
+
+Successful downloads record MIME type, file size, and SHA-256 integrity metadata. Failed attempts retain a classified status and error message for later inspection/retry.
+
 ## Web UI
 
 Start the FastAPI server (e.g., with uvicorn):

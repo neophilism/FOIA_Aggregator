@@ -10,6 +10,13 @@ foia_hub:
   # api_key can be provided here or via the FOIA_API_KEY environment variable.
   api_key: ""
 
+downloader:
+  timeout_seconds: 60
+  max_file_size_mb: 100
+  max_redirects: 5
+  max_retries: 3
+  retry_backoff_seconds: 1
+
 storage:
   db_path: "data/foia_archive.db"
   files_dir: "data/files"
