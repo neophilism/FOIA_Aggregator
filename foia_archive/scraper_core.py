@@ -227,12 +227,21 @@ def get_reading_rooms_to_crawl(config: Config, limit: Optional[int] = None):
 def _is_http_url(url: str) -> bool:
     try:
         parsed = urlparse(url)
-        return (
-            parsed.scheme.lower() in {"http", "https"}
-            and bool(parsed.hostname)
-            and parsed.username is None
-            and parsed.password is None
-        )
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            return False
+
+        hostname = parsed.hostname.rstrip(".").lower()
+        if hostname == "localhost" or hostname.endswith(".localhost"):
+            return False
+        try:
+            return ipaddress.ip_address(hostname).is_global
+        except ValueError:
+            return True
     except ValueError:
         return False
 
@@ -355,12 +364,13 @@ def _stream_response_to_file(
     content_length = response.headers.get("Content-Length")
     if content_length:
         try:
-            if int(content_length) > max_bytes:
-                raise FileTooLarge(
-                    f"Content-Length {content_length} exceeds {max_bytes} bytes"
-                )
+            declared_size = int(content_length)
         except ValueError:
-            pass
+            declared_size = None
+        if declared_size is not None and declared_size > max_bytes:
+            raise FileTooLarge(
+                f"Content-Length {content_length} exceeds {max_bytes} bytes"
+            )
 
     temp_path = None
     size = 0
