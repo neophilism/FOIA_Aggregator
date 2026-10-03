@@ -40,11 +40,18 @@ def init_db(db_path: Path | str, files_dir: Path | str) -> None:
     conn.execute(
         """
         UPDATE documents
-        SET download_status = CASE
-            WHEN local_path IS NOT NULL AND local_path != '' THEN 'downloaded'
-            ELSE 'pending'
-        END
-        WHERE download_status IS NULL OR download_status = ''
+        SET download_status = 'downloaded'
+        WHERE local_path IS NOT NULL
+          AND local_path != ''
+          AND (download_status IS NULL OR download_status IN ('', 'pending'))
+        """
+    )
+    conn.execute(
+        """
+        UPDATE documents
+        SET download_status = 'pending'
+        WHERE (local_path IS NULL OR local_path = '')
+          AND (download_status IS NULL OR download_status = '')
         """
     )
     conn.commit()
