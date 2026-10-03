@@ -10,7 +10,7 @@ from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from foia_archive.storage import init_db
+from foia_archive.storage import init_db, query_documents
 from foia_archive.utils import load_config
 
 config = load_config("config/settings.yaml")
@@ -46,44 +46,6 @@ def fetch_file_types(conn: sqlite3.Connection) -> List[str]:
     rows = conn.execute("SELECT DISTINCT file_type FROM documents WHERE file_type IS NOT NULL").fetchall()
     return [r[0] for r in rows if r[0]]
 
-
-def query_documents(
-    conn: sqlite3.Connection,
-    agency_id: Optional[int],
-    office_id: Optional[int],
-    file_type: Optional[str],
-    start_date: Optional[str],
-    end_date: Optional[str],
-) -> List[sqlite3.Row]:
-    query = [
-        "SELECT d.id, d.title, d.file_type, d.published_date, d.discovered_at, d.local_path, d.url,",
-        "       a.name AS agency_name, o.name AS office_name",
-        "FROM documents d",
-        "LEFT JOIN agencies a ON d.agency_id = a.id",
-        "LEFT JOIN offices o ON d.office_id = o.id",
-        "WHERE 1=1",
-    ]
-    params: List[Any] = []
-
-    if agency_id:
-        query.append("AND d.agency_id = ?")
-        params.append(agency_id)
-    if office_id:
-        query.append("AND d.office_id = ?")
-        params.append(office_id)
-    if file_type:
-        query.append("AND d.file_type = ?")
-        params.append(file_type)
-    if start_date:
-        query.append("AND d.published_date >= ?")
-        params.append(start_date)
-    if end_date:
-        query.append("AND d.published_date <= ?")
-        params.append(end_date)
-
-    query.append("ORDER BY d.discovered_at DESC LIMIT 200")
-    sql = "\n".join(query)
-    return conn.execute(sql, params).fetchall()
 
 
 @app.get("/", response_class=HTMLResponse)
