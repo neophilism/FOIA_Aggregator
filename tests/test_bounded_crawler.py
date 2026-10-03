@@ -327,6 +327,23 @@ class BoundedReadingRoomCrawlerTests(unittest.TestCase):
             ],
         )
 
+    def test_zero_dry_run_limit_discovers_no_new_documents(self):
+        with patch(
+            "foia_archive.scraper_core.requests.get",
+            return_value=FakeResponse(
+                '<a href="one.pdf">One</a>',
+                headers={"Content-Type": "text/html"},
+            ),
+        ):
+            crawl_reading_room(
+                self.rr_id,
+                self.config,
+                dry_run=True,
+                max_docs=0,
+            )
+
+        self.assertEqual(self._documents(), {})
+
     def test_document_safety_limit_caps_unique_candidates(self):
         config = Config(
             {
