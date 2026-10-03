@@ -484,8 +484,14 @@ class ReadingRoomCrawlHealthTests(unittest.TestCase):
             None,
         )
         conn.close()
+        self.validation_patcher = patch(
+            "foia_archive.scraper_core._validate_public_destination",
+            return_value=None,
+        )
+        self.validation_patcher.start()
 
     def tearDown(self):
+        self.validation_patcher.stop()
         self.tempdir.cleanup()
 
     def _row(self):
