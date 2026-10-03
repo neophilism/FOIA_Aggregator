@@ -44,6 +44,20 @@ FOIA.gov component metadata is treated conservatively. Only fields explicitly de
 
 Each discovered source tracks whether it is active, when it was last seen in a complete metadata refresh, its last successful crawl, and its most recent crawl error. A complete refresh marks previously known but unseen sources inactive; empty or unrecognized metadata refreshes preserve the existing active set as a safety measure.
 
+## Bounded reading-room crawling
+
+Reading rooms are crawled breadth-first within a strict boundary: the same hostname and the source URL's path subtree. The crawler follows ordinary internal page links and `rel="next"` pagination, but stops at configurable page, depth, and document ceilings. It never recursively follows an obvious document link as a page.
+
+The generic crawler also:
+- canonicalizes URLs and removes fragment-only duplicates
+- recognizes common released-record formats including PDF, Office files, CSV, text, XML/JSON, email, images, audio, and video
+- detects extensionless records from response MIME type or `Content-Disposition`
+- applies a shared per-host request delay across reading rooms
+- honors numeric `Retry-After` responses while retrying 429/5xx requests
+- bounds HTML/page response size separately from archived document size
+
+Crawl limits and request pacing are configured under `crawler` in `config/settings.yaml`. Difficult JavaScript/search-driven reading rooms remain candidates for later site-specific adapters rather than being crawled without bounds.
+
 ## Download safety
 
 Document downloads are limited to public HTTP(S) destinations. Redirects are revalidated, private/loopback/link-local destinations are rejected, files are streamed to temporary files before atomic placement in the archive, and configurable size/retry limits live under `downloader` in `config/settings.yaml`.

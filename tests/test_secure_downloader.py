@@ -235,6 +235,33 @@ class SecureDownloaderTests(unittest.TestCase):
         self.assertTrue(first.closed)
         self.assertTrue(second.closed)
 
+    def test_retry_after_header_is_honored(self):
+        first = FakeResponse(429, {"Retry-After": "3"})
+        second = FakeResponse(
+            200,
+            {"Content-Type": "application/pdf"},
+            [b"ok"],
+        )
+        with (
+            patch(
+                "foia_archive.scraper_core.socket.getaddrinfo",
+                return_value=PUBLIC_ADDRINFO,
+            ),
+            patch(
+                "foia_archive.scraper_core.requests.get",
+                side_effect=[first, second],
+            ),
+            patch("foia_archive.scraper_core.time.sleep") as sleep,
+        ):
+            result = download_document(
+                "https://example.gov/report.pdf",
+                "report.pdf",
+                self.config,
+            )
+
+        self.assertEqual(result.status, "downloaded")
+        sleep.assert_called_once_with(3.0)
+
     def test_non_retryable_http_error_is_not_retried(self):
         response = FakeResponse(404)
         with (
