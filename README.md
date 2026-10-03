@@ -64,6 +64,14 @@ Document downloads are limited to public HTTP(S) destinations. Redirects are rev
 
 Successful downloads record MIME type, file size, and SHA-256 integrity metadata. Failed attempts retain a classified status and error message for later inspection/retry.
 
+## Database durability
+
+The archive uses SQLite WAL mode, a busy timeout, and enforced foreign keys on application connections. Schema upgrades are recorded in `schema_migrations` and applied automatically by `init_db()`; existing archives do not need to be deleted when new migrations are added.
+
+A document URL remains unique in `documents`, while `document_sources` records every reading room that publishes the same document. The original `documents.reading_room_id` is retained as the first/primary source for backward compatibility. Agency and office filters also match secondary source relationships.
+
+Indexes cover the primary browse/filter fields and crawler status fields so archive growth does not require full-table scans for ordinary queries.
+
 ## Web UI
 
 Start the FastAPI server (e.g., with uvicorn):
