@@ -16,6 +16,7 @@ from foia_archive.storage import (
     get_connection,
     init_db,
     insert_document,
+    update_download_failure,
     update_download_metadata,
 )
 from foia_archive.utils import Config
@@ -310,6 +311,47 @@ class DownloadMetadataMigrationTests(unittest.TestCase):
             }.issubset(columns)
         )
         self.assertEqual(row["download_status"], "downloaded")
+
+    def test_download_failure_status_and_error_are_persisted(self):
+        init_db(self.db_path, self.files_dir)
+        conn = get_connection(self.db_path)
+        try:
+            doc_id = insert_document(
+                conn,
+                url="https://example.gov/report.pdf",
+                title="Report",
+                file_type="pdf",
+                filename="report.pdf",
+                agency_id=None,
+                office_id=None,
+                reading_room_id=None,
+                discovered_at="2026-01-01T00:00:00",
+            )
+            update_download_failure(
+                conn,
+                doc_id,
+                "blocked_url",
+                "URL resolves to a non-public address",
+                "2026-01-01T00:00:01",
+            )
+            row = conn.execute(
+                """
+                SELECT download_status, download_error,
+                       last_download_attempt_at, local_path
+                FROM documents WHERE id = ?
+                """,
+                (doc_id,),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        self.assertEqual(row["download_status"], "blocked_url")
+        self.assertIn("non-public", row["download_error"])
+        self.assertEqual(
+            row["last_download_attempt_at"],
+            "2026-01-01T00:00:01",
+        )
+        self.assertIsNone(row["local_path"])
 
     def test_download_metadata_is_persisted_with_completed_status(self):
         init_db(self.db_path, self.files_dir)
