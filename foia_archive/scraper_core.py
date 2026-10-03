@@ -353,24 +353,177 @@ def _validate_public_destination(url: str) -> None:
             )
 
 
+def canonicalize_url(url: str) -> Optional[str]:
+    """Normalize a crawl URL without changing its query semantics."""
+    if not _is_http_url(url):
+        return None
+    try:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").rstrip(".").lower()
+        port = parsed.port
+    except ValueError:
+        return None
+
+    scheme = parsed.scheme.lower()
+    host_display = f"[{hostname}]" if ":" in hostname and not hostname.startswith("[") else hostname
+    default_port = (scheme == "http" and port == 80) or (scheme == "https" and port == 443)
+    netloc = host_display if port is None or default_port else f"{host_display}:{port}"
+
+    raw_path = re.sub(r"/{2,}", "/", parsed.path or "/")
+    had_trailing_slash = raw_path.endswith("/")
+    path = posixpath.normpath(raw_path)
+    if path == ".":
+        path = "/"
+    if not path.startswith("/"):
+        path = "/" + path
+    if had_trailing_slash and path != "/" and not path.endswith("/"):
+        path += "/"
+
+    return urlunparse((scheme, netloc, path, "", parsed.query, ""))
+
+
+def _extension_from_url(url: str) -> str:
+    path = urlparse(url).path
+    name = path.rsplit("/", 1)[-1]
+    if "." not in name:
+        return ""
+    return name.rsplit(".", 1)[-1].lower()
+
+
+def _content_type(response) -> str:
+    headers = getattr(response, "headers", {}) or {}
+    raw = headers.get("Content-Type") or headers.get("content-type") or ""
+    return raw.split(";", 1)[0].strip().lower()
+
+
+def _content_disposition_filename(response) -> Optional[str]:
+    headers = getattr(response, "headers", {}) or {}
+    value = headers.get("Content-Disposition") or headers.get("content-disposition") or ""
+    if not value:
+        return None
+    match = re.search(r"filename\*?=(?:UTF-8''|\")?([^\";]+)", value, flags=re.IGNORECASE)
+    if not match:
+        return None
+    return unquote(match.group(1).strip().strip('"')) or None
+
+
+def _document_type_from_response(response, url: str) -> Optional[str]:
+    mime_type = _content_type(response)
+    if mime_type in DOCUMENT_MIME_TYPES:
+        return DOCUMENT_MIME_TYPES[mime_type]
+
+    disposition_name = _content_disposition_filename(response)
+    if disposition_name and "." in disposition_name:
+        ext = disposition_name.rsplit(".", 1)[-1].lower()
+        if ext in ALLOWED_EXTENSIONS:
+            return ext
+
+    ext = _extension_from_url(url)
+    if ext in ALLOWED_EXTENSIONS and mime_type not in HTML_MIME_TYPES:
+        return ext
+    return None
+
+
+def _filename_hint(url: str, title: str, file_type: str) -> str:
+    name = urlparse(url).path.rsplit("/", 1)[-1] or clean_filename(title) or "document"
+    if "." not in name and file_type:
+        name = f"{name}.{file_type}"
+    return clean_filename(name)
+
+
+def _crawl_scope(root_url: str) -> CrawlScope:
+    parsed = urlparse(root_url)
+    path = parsed.path or "/"
+    if path != "/" and not path.endswith("/") and "." in path.rsplit("/", 1)[-1]:
+        path = path.rsplit("/", 1)[0] or "/"
+    prefix = path.rstrip("/") or "/"
+    return CrawlScope(
+        hostname=(parsed.hostname or "").lower(),
+        port=parsed.port,
+        path_prefix=prefix,
+    )
+
+
+def _url_in_scope(url: str, scope: CrawlScope) -> bool:
+    try:
+        parsed = urlparse(url)
+        hostname = (parsed.hostname or "").lower()
+        port = parsed.port
+    except ValueError:
+        return False
+    if hostname != scope.hostname:
+        return False
+    if port != scope.port:
+        return False
+    path = parsed.path or "/"
+    if scope.path_prefix == "/":
+        return True
+    return path == scope.path_prefix or path.startswith(scope.path_prefix + "/")
+
+
+def extract_crawl_targets(
+    html: str,
+    base_url: str,
+    scope: CrawlScope,
+    depth: int,
+) -> List[CrawlTarget]:
+    """Return same-scope HTML/page candidates for bounded traversal."""
+    soup = BeautifulSoup(html, "html.parser")
+    targets: List[CrawlTarget] = []
+    seen: Set[str] = set()
+
+    candidates = list(soup.find_all("a", href=True))
+    candidates.extend(
+        tag for tag in soup.find_all("link", href=True)
+        if "next" in {str(rel).lower() for rel in (tag.get("rel") or [])}
+    )
+
+    for tag in candidates:
+        href = tag.get("href")
+        if not href:
+            continue
+        canonical = canonicalize_url(urljoin(base_url, href))
+        if not canonical or canonical in seen:
+            continue
+
+        ext = _extension_from_url(canonical)
+        if ext in ALLOWED_EXTENSIONS or ext in SKIP_CRAWL_EXTENSIONS:
+            continue
+        if not _url_in_scope(canonical, scope):
+            continue
+
+        seen.add(canonical)
+        targets.append(
+            CrawlTarget(
+                url=canonical,
+                depth=depth,
+                title=tag.get_text(" ", strip=True) or canonical,
+                published_date=_published_date_from_context(tag),
+            )
+        )
+    return targets
+
+
 def extract_document_links(html: str, base_url: str) -> List[DocumentLink]:
     soup = BeautifulSoup(html, "html.parser")
     links: List[DocumentLink] = []
+    seen: Set[str] = set()
     for tag in soup.find_all("a", href=True):
         href = tag.get("href")
         if not href:
             continue
-        absolute_url = urljoin(base_url, href)
-        if not _is_http_url(absolute_url):
+        absolute_url = canonicalize_url(urljoin(base_url, href))
+        if not absolute_url or absolute_url in seen:
             continue
-        path = urlparse(absolute_url).path
-        ext = path.split(".")[-1].lower() if "." in path else ""
+        ext = _extension_from_url(absolute_url)
         if ext in ALLOWED_EXTENSIONS:
+            seen.add(absolute_url)
             links.append(
                 {
                     "url": absolute_url,
-                    "title": tag.get_text(strip=True) or href,
+                    "title": tag.get_text(" ", strip=True) or href,
                     "published_date": _published_date_from_context(tag),
+                    "file_type": ext,
                 }
             )
     return links
