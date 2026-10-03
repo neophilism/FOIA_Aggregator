@@ -100,12 +100,13 @@ def _migration_2_document_sources(conn: sqlite3.Connection) -> None:
                 last_seen_at
             )
             SELECT
-                id,
-                reading_room_id,
-                discovered_at,
-                discovered_at
-            FROM documents
-            WHERE reading_room_id IS NOT NULL
+                d.id,
+                d.reading_room_id,
+                d.discovered_at,
+                d.discovered_at
+            FROM documents d
+            JOIN reading_rooms rr ON rr.id = d.reading_room_id
+            WHERE d.reading_room_id IS NOT NULL
             """
         )
 
