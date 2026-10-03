@@ -302,6 +302,45 @@ def document_exists(conn: sqlite3.Connection, url: str) -> bool:
     return get_document_by_url(conn, url) is not None
 
 
+def _associate_document_source_no_commit(
+    conn: sqlite3.Connection,
+    document_id: int,
+    reading_room_id: int,
+    seen_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO document_sources (
+            document_id,
+            reading_room_id,
+            first_seen_at,
+            last_seen_at
+        )
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(document_id, reading_room_id) DO UPDATE SET
+            last_seen_at = excluded.last_seen_at
+        """,
+        (document_id, reading_room_id, seen_at, seen_at),
+    )
+
+
+def associate_document_source(
+    conn: sqlite3.Connection,
+    document_id: int,
+    reading_room_id: Optional[int],
+    seen_at: str,
+) -> None:
+    if reading_room_id is None:
+        return
+    _associate_document_source_no_commit(
+        conn,
+        document_id,
+        reading_room_id,
+        seen_at,
+    )
+    conn.commit()
+
+
 def insert_document(
     conn: sqlite3.Connection,
     url: str,
@@ -334,8 +373,16 @@ def insert_document(
             published_date,
         ),
     )
+    document_id = cur.lastrowid
+    if reading_room_id is not None:
+        _associate_document_source_no_commit(
+            conn,
+            document_id,
+            reading_room_id,
+            discovered_at,
+        )
     conn.commit()
-    return cur.lastrowid
+    return document_id
 
 
 
@@ -384,11 +431,37 @@ def query_documents(
     params: List[Any] = []
 
     if agency_id:
-        query.append("AND d.agency_id = ?")
-        params.append(agency_id)
+        query.append(
+            """
+            AND (
+                d.agency_id = ?
+                OR EXISTS (
+                    SELECT 1
+                    FROM document_sources ds
+                    JOIN reading_rooms rr ON rr.id = ds.reading_room_id
+                    WHERE ds.document_id = d.id
+                      AND rr.agency_id = ?
+                )
+            )
+            """
+        )
+        params.extend([agency_id, agency_id])
     if office_id:
-        query.append("AND d.office_id = ?")
-        params.append(office_id)
+        query.append(
+            """
+            AND (
+                d.office_id = ?
+                OR EXISTS (
+                    SELECT 1
+                    FROM document_sources ds
+                    JOIN reading_rooms rr ON rr.id = ds.reading_room_id
+                    WHERE ds.document_id = d.id
+                      AND rr.office_id = ?
+                )
+            )
+            """
+        )
+        params.extend([office_id, office_id])
     if file_type:
         query.append("AND d.file_type = ?")
         params.append(file_type)
