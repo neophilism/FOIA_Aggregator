@@ -27,6 +27,10 @@ class Config:
     def storage(self) -> Dict[str, Any]:
         return self.data.get("storage", {})
 
+    @property
+    def downloader(self) -> Dict[str, Any]:
+        return self.data.get("downloader", {})
+
 
 logger = logging.getLogger("foia_archive")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
