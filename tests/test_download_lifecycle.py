@@ -51,14 +51,20 @@ class DownloadLifecycleTests(unittest.TestCase):
         conn.close()
         self.document_url = "https://example.gov/records/report.pdf"
         self.page_html = '<a href="/records/report.pdf">Report</a>'
+        self.validation_patcher = patch(
+            "foia_archive.scraper_core._validate_public_destination",
+            return_value=None,
+        )
+        self.validation_patcher.start()
 
     def tearDown(self):
+        self.validation_patcher.stop()
         self.tempdir.cleanup()
 
     def _page_get(self, *args, **kwargs):
         return PageResponse(self.page_html)
 
-    def _write_download(self, url, filename_hint, config):
+    def _write_download(self, url, filename_hint, config, rate_limiter=None):
         path = self.files_dir / "saved.pdf"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(b"pdf")
