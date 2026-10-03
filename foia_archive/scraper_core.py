@@ -281,7 +281,14 @@ def crawl_reading_room(rr_id: int, config: Config, dry_run: bool, max_docs: Opti
             update_document_published_date_if_missing(conn, url, published_date)
             doc_id = existing["id"]
             if existing["local_path"]:
-                continue
+                files_dir = Path(config.storage.get("files_dir"))
+                archived_path = files_dir / existing["local_path"]
+                if archived_path.is_file():
+                    continue
+                logger.warning(
+                    "Stored file missing for %s; retrying download",
+                    url,
+                )
         else:
             if dry_run and max_docs is not None and downloaded >= max_docs:
                 logger.info("Dry run limit reached for %s", rr["url"])
