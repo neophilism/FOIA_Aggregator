@@ -91,9 +91,13 @@ def list_reading_rooms(conn: sqlite3.Connection, limit: Optional[int] = None) ->
     return cur.fetchall()
 
 
+def get_document_by_url(conn: sqlite3.Connection, url: str) -> Optional[sqlite3.Row]:
+    """Return the stored document row for a URL, if one exists."""
+    return conn.execute("SELECT * FROM documents WHERE url = ?", (url,)).fetchone()
+
+
 def document_exists(conn: sqlite3.Connection, url: str) -> bool:
-    cur = conn.execute("SELECT 1 FROM documents WHERE url = ?", (url,))
-    return cur.fetchone() is not None
+    return get_document_by_url(conn, url) is not None
 
 
 def insert_document(
