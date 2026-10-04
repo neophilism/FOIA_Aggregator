@@ -4,7 +4,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .discovery import refresh_metadata
-from .scraper_core import crawl_reading_room, get_reading_rooms_to_crawl
+from .scraper_core import HostRateLimiter, crawl_reading_room, get_reading_rooms_to_crawl
 from .storage import init_db
 from .utils import load_config, logger
 
@@ -34,5 +34,14 @@ def run_once(
 
     dry_run_flag = cfg.crawler.get("dry_run", True)
     max_docs = cfg.crawler.get("max_docs_per_source")
+    rate_limiter = HostRateLimiter(
+        float(cfg.crawler.get("per_host_delay_seconds", 0))
+    )
     for rr in rooms:
-        crawl_reading_room(rr["id"], cfg, dry_run=dry_run_flag, max_docs=max_docs)
+        crawl_reading_room(
+            rr["id"],
+            cfg,
+            dry_run=dry_run_flag,
+            max_docs=max_docs,
+            rate_limiter=rate_limiter,
+        )

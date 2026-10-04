@@ -467,6 +467,10 @@ class ReadingRoomCrawlHealthTests(unittest.TestCase):
         self.config = Config(
             {
                 "crawler": {"user_agent": "FOIAArchiveTest/1.0"},
+                "downloader": {
+                    "max_retries": 0,
+                    "retry_backoff_seconds": 0,
+                },
                 "storage": {
                     "db_path": str(self.db_path),
                     "files_dir": str(self.files_dir),
@@ -484,8 +488,14 @@ class ReadingRoomCrawlHealthTests(unittest.TestCase):
             None,
         )
         conn.close()
+        self.validation_patcher = patch(
+            "foia_archive.scraper_core._validate_public_destination",
+            return_value=None,
+        )
+        self.validation_patcher.start()
 
     def tearDown(self):
+        self.validation_patcher.stop()
         self.tempdir.cleanup()
 
     def _row(self):
