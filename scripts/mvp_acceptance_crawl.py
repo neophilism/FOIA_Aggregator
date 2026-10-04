@@ -12,6 +12,10 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from foia_archive import scraper_core
 from foia_archive.scraper_core import HostRateLimiter, crawl_reading_room
 from foia_archive.storage import (
