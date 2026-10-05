@@ -32,7 +32,7 @@ RUN chmod +x /app/docker-entrypoint.sh
 EXPOSE 8000
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
-    CMD-SHELL curl -fsS "http://127.0.0.1:${PORT:-8000}/healthz" || exit 1
+    CMD curl -fsS "http://127.0.0.1:${PORT:-8000}/healthz" || exit 1
 
 ENTRYPOINT ["/app/docker-entrypoint.sh"]
 CMD ["sh", "-c", "exec python -m uvicorn ui.server:app --host 0.0.0.0 --port ${PORT:-8000}"]
