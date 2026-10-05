@@ -8,10 +8,11 @@ from typing import List, Optional
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import HTMLResponse
+from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
+from foia_archive.archive_storage import ArchiveStorageError, LocalArchiveStorage, get_archive_storage
 from foia_archive.storage import SORT_ORDERS, get_connection, init_db, query_documents_page
 from foia_archive.utils import load_config
 
@@ -97,6 +98,53 @@ def _page_url(
     return "/?" + urlencode(
         {key: value for key, value in params.items() if value not in (None, "")}
     )
+
+
+@app.get("/archive/{document_id}")
+async def archived_document(document_id: int):
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT id, local_path, storage_backend, storage_key, download_status
+            FROM documents
+            WHERE id = ?
+            """,
+            (document_id,),
+        ).fetchone()
+    finally:
+        conn.close()
+
+    if row is None:
+        raise HTTPException(status_code=404, detail="Document not found")
+    if row["download_status"] != "downloaded":
+        raise HTTPException(status_code=404, detail="Document is not archived")
+
+    backend_name = row["storage_backend"] or (
+        "local" if row["local_path"] else None
+    )
+    key = row["storage_key"] or row["local_path"]
+    if not backend_name or not key:
+        raise HTTPException(status_code=404, detail="Archive location is missing")
+
+    try:
+        backend = get_archive_storage(config, backend_name=backend_name)
+        if isinstance(backend, LocalArchiveStorage):
+            path = backend.path_for_key(key)
+            if not path.is_file():
+                raise HTTPException(status_code=404, detail="Archived file is missing")
+            return FileResponse(path)
+        return RedirectResponse(
+            backend.presigned_url(key, expires_seconds=3600),
+            status_code=307,
+        )
+    except HTTPException:
+        raise
+    except ArchiveStorageError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Archive storage unavailable: {exc}",
+        ) from exc
 
 
 @app.get("/", response_class=HTMLResponse)
