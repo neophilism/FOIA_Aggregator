@@ -12,7 +12,9 @@ from .discovery import (
     _normalize_source_url,
     extract_reading_room_sources,
 )
+from .intelligence_community_sources import normalized_ic_elements
 from .source_overrides import (
+    current_source_url,
     curated_sources_for_component,
     historical_component_note,
 )
@@ -107,7 +109,10 @@ def iter_url_fields(value: Any, path: Tuple[str, ...] = ()) -> Iterable[URLField
     if isinstance(value, str):
         normalized = _normalize_source_url(value)
         if normalized:
-            yield URLField(path=_path_text(path), url=normalized)
+            yield URLField(
+                path=_path_text(path),
+                url=current_source_url(normalized),
+            )
         return
 
     if isinstance(value, dict):
@@ -268,6 +273,24 @@ def build_component_census(
             }
         )
 
+    ic_elements = normalized_ic_elements()
+    for element in ic_elements:
+        for source in element["sources"]:
+            url = source["url"]
+            if url in unique_source_urls:
+                continue
+            unique_source_urls.add(url)
+            source_instances.append(
+                {
+                    "agency_id": None,
+                    "agency_name": element["parent_agency"],
+                    "component_id": None,
+                    "component_name": element["name"],
+                    "source_type": f"ic_{source['mode']}",
+                    "url": url,
+                }
+            )
+
     source_type_counts = Counter(
         source["source_type"] for source in source_instances
     )
@@ -341,6 +364,7 @@ def build_component_census(
         "candidate_ignored_field_counts": dict(
             candidate_field_counter.most_common()
         ),
+        "intelligence_community": ic_elements,
     }
 
 
@@ -632,6 +656,54 @@ def attach_probe_results(
         for agency_name in agencies_without_reachable_source
     }
 
+    ic_rows: List[Dict[str, Any]] = []
+    ic_reachable = 0
+    ic_known_unreachable = 0
+    ic_unprobed = 0
+    for element in census.get("intelligence_community", []):
+        source_rows = []
+        categories: set[str] = set()
+        for source in element["sources"]:
+            result = probe_results.get(source["url"])
+            source_row = dict(source)
+            if result is not None:
+                source_row["probe"] = asdict(result)
+                categories.add(result.category)
+            else:
+                source_row["probe"] = None
+            source_rows.append(source_row)
+
+        if categories & REACHABLE_PROBE_CATEGORIES:
+            coverage_status = "reachable"
+            ic_reachable += 1
+        elif categories:
+            coverage_status = "known_unreachable"
+            ic_known_unreachable += 1
+        else:
+            coverage_status = "unprobed"
+            ic_unprobed += 1
+
+        ic_rows.append(
+            {
+                "slug": element["slug"],
+                "name": element["name"],
+                "parent_agency": element["parent_agency"],
+                "sources": source_rows,
+                "probe_categories": sorted(categories),
+                "coverage_status": coverage_status,
+            }
+        )
+
+    enriched["intelligence_community"] = ic_rows
+    enriched["ic_summary"] = {
+        "elements": len(ic_rows),
+        "elements_with_sources": sum(
+            1 for row in ic_rows if row["sources"]
+        ),
+        "reachable_elements": ic_reachable,
+        "known_unreachable_elements": ic_known_unreachable,
+        "unprobed_elements": ic_unprobed,
+    }
     enriched["probes"] = probes
     enriched["probe_summary"] = {
         "sources_probed": len(probe_results),
