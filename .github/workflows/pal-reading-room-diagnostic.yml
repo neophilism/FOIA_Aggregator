@@ -1,0 +1,21 @@
+name: PAL reading-room diagnostic
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - feature/pal-reading-room-adapter
+    paths:
+      - scripts/pal_reading_room_probe.py
+      - .github/workflows/pal-reading-room-diagnostic.yml
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r requirements.txt
+      - run: python scripts/pal_reading_room_probe.py
