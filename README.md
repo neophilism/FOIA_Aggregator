@@ -167,8 +167,10 @@ The workflow never prints the application key or signed download URL.
 
 The archive can index extracted document body text in SQLite FTS5 while preserving the existing title/filename substring search.
 
-Supported first-pass extractors:
+Supported extractors:
 - PDF text layers via `pypdf`
+- OCR for image-only PDF pages via Tesseract, rendered with `pypdfium2`
+- OCR for PNG, JPEG/JPG, TIFF/TIF images
 - DOCX paragraphs and tables via `python-docx`
 - text-like formats including TXT, CSV, JSON, XML, RTF, and EML
 
@@ -177,9 +179,13 @@ Extraction runs **before** a newly downloaded file is committed to its archive b
 Each archived document receives explicit extraction state in `document_text`, including:
 - `indexed`
 - `indexed_truncated`
-- `empty` — for example, a scanned PDF with no text layer; this is a future OCR candidate
+- `empty` — extraction/OCR ran but found no searchable text
+- `ocr_unavailable` — Tesseract is not installed or unavailable
+- `ocr_failed` — OCR was attempted but failed
 - `unsupported`
 - `extraction_failed`
+
+`document_text.extraction_method` records whether indexed text came from `native_text`, `ocr`, or a `mixed` PDF containing both born-digital and scanned pages.
 
 The FTS index is keyed by the document ID and is refreshed atomically whenever extracted text is replaced. If an archived file is later found missing and a re-download fails, its stale extracted text is removed from search as well.
 
@@ -190,7 +196,7 @@ search:
   max_indexed_chars_per_document: 5000000
 ```
 
-This prevents a single unusually large release from dominating SQLite memory or disk. OCR can reuse the same ceiling later.
+This prevents a single unusually large release from dominating SQLite memory or disk. OCR output uses the same ceiling.
 
 Existing archived documents can be indexed without re-crawling agency websites:
 
@@ -207,7 +213,31 @@ python main.py reindex-text --force
 
 The backfill command reads local archive files directly. For B2-backed documents it downloads only the archived object into a temporary staging directory, extracts/indexes the text, and removes the temporary copy.
 
-OCR, legacy binary Office formats, image-only documents, and audio/video transcription are intentionally separate later phases so they can be added without changing the full-text search schema.
+### OCR
+
+OCR is enabled by default in `config/settings.yaml`:
+
+```yaml
+ocr:
+  enabled: true
+  languages: "eng"
+  dpi: 200
+  max_pages_per_document: 50
+  page_timeout_seconds: 45
+  max_image_megapixels: 20
+```
+
+Tesseract must be installed on the runtime host. On Debian/Ubuntu:
+
+```bash
+sudo apt-get install tesseract-ocr
+```
+
+The crawler does not OCR a whole PDF indiscriminately. It keeps native text on pages that already have a text layer and OCRs only pages where native extraction returns no text. Mixed PDFs therefore retain native text where possible while adding OCR text for scanned pages.
+
+OCR work is bounded by page count, render DPI, per-page Tesseract timeout, image megapixels, and the existing indexed-character ceiling. If Tesseract is unavailable or OCR fails, the original file is still archived and the failure is recorded in extraction metadata rather than failing the document download.
+
+Legacy binary Office formats and audio/video transcription remain separate later phases.
 
 ## Continuous-operation resilience
 
@@ -248,14 +278,14 @@ When running locally, open http://127.0.0.1:8000/. In GitHub Codespaces, open th
 The default search spans all agencies and offices. Selecting an agency or office only narrows the result set.
 
 The MVP UI supports:
-- title/filename search
+- full-text search across titles, filenames, extracted PDF/DOCX/text content, and OCR text
 - agency, office, file-type, and published-date filters
 - result counts and 25/50/100-row pagination
 - sorting by discovery date, publication date, or title
 - explicit download-status/error badges
 - direct archived-file and original-source links
 
-Pagination removes the former silent 200-result ceiling. Title search is metadata-only for the MVP; full document-body search/OCR remains a later phase.
+Pagination removes the former silent 200-result ceiling. Full-text search uses SQLite FTS5 while the existing title/filename substring behavior remains available through the same search field.
 
 ## Future scope: international access-to-information systems
 

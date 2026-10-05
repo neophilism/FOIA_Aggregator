@@ -48,7 +48,7 @@ class FullTextSearchTests(unittest.TestCase):
         )
 
     def test_schema_migration_creates_fts5_tables(self):
-        self.assertEqual(get_schema_version(self.conn), 5)
+        self.assertEqual(get_schema_version(self.conn), 6)
         names = {
             row["name"]
             for row in self.conn.execute(

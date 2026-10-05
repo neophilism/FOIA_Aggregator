@@ -14,7 +14,7 @@ from .archive_storage import (
     get_archive_storage,
 )
 from .storage import get_connection, init_db, upsert_document_text
-from .text_extraction import extract_document_text
+from .text_extraction import OCRSettings, extract_document_text
 from .utils import Config, logger
 
 
@@ -101,7 +101,26 @@ def reindex_downloaded_documents(
         ]
         params: list[object] = []
         if not force:
-            query.append("AND dt.document_id IS NULL")
+            query.append(
+                """
+                AND (
+                    dt.document_id IS NULL
+                    OR dt.extraction_status IN ('ocr_unavailable', 'ocr_failed')
+                    OR (
+                        dt.extraction_method IS NULL
+                        AND (
+                            dt.extraction_status = 'empty'
+                            OR (
+                                dt.extraction_status = 'unsupported'
+                                AND LOWER(COALESCE(d.file_type, '')) IN (
+                                    'png', 'jpg', 'jpeg', 'tif', 'tiff'
+                                )
+                            )
+                        )
+                    )
+                )
+                """
+            )
         query.append("ORDER BY d.id")
         if limit is not None:
             query.append("LIMIT ?")
@@ -130,6 +149,7 @@ def reindex_downloaded_documents(
                         source,
                         row["file_type"],
                         max_chars=max_chars,
+                        ocr=OCRSettings.from_mapping(config.data.get("ocr")),
                     )
                     now = datetime.now(timezone.utc).isoformat()
                     upsert_document_text(
@@ -138,6 +158,7 @@ def reindex_downloaded_documents(
                         body=extraction.text,
                         extraction_status=extraction.status,
                         extraction_error=extraction.error,
+                        extraction_method=extraction.method,
                         extracted_at=now,
                         character_count=extraction.character_count,
                         truncated=extraction.truncated,

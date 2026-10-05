@@ -106,6 +106,7 @@ CREATE TABLE IF NOT EXISTS document_text (
     body TEXT,
     extraction_status TEXT NOT NULL DEFAULT 'pending',
     extraction_error TEXT,
+    extraction_method TEXT,
     extracted_at TEXT,
     character_count INTEGER DEFAULT 0,
     truncated INTEGER DEFAULT 0,
