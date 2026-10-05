@@ -91,26 +91,21 @@ def summarize(url: str) -> None:
         body = script.get_text("\n", strip=True)
         if not body:
             continue
-        interesting = [
-            line.strip()
-            for line in body.splitlines()
-            if any(
-                token.lower() in line.lower()
-                for token in (
-                    "readingroom",
-                    "ajax",
-                    "postback",
-                    "__dopostback",
-                    "webmethod",
-                    "pagemethod",
-                    "search",
-                    "grid",
-                    "download",
-                )
-            )
-        ]
-        for line in interesting[:80]:
-            print("SCRIPT_LINE", line[:500])
+        lower = body.lower()
+        fn_index = lower.find("function fnsearch")
+        if fn_index >= 0:
+            print("FNSEARCH_BLOCK", body[fn_index:fn_index + 7000])
+        params_match = re.search(
+            r"var\\s+searchParams\\s*=\\s*\\{.*?\\};",
+            body,
+            flags=re.IGNORECASE | re.DOTALL,
+        )
+        if params_match:
+            print("SEARCH_PARAMS_BLOCK", params_match.group(0)[:5000])
+        ajax_index = lower.find('url: "searchdocs.aspx"')
+        if ajax_index >= 0:
+            start = max(0, ajax_index - 1500)
+            print("AJAX_BLOCK", body[start:ajax_index + 2500])
 
 
 def main() -> None:
