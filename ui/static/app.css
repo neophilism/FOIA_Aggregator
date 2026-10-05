@@ -224,6 +224,23 @@ button:hover, .button:hover {
   font-size: 0.82rem;
 }
 
+.archive-freshness {
+  margin: 9px 0 0;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+
+.error-page {
+  max-width: 720px;
+  padding: 64px 0 72px;
+}
+
+.error-page h1 {
+  margin: 0;
+  font-size: clamp(2rem, 5vw, 3.6rem);
+  line-height: 1.08;
+}
+
 .filters {
   margin: 16px 0 28px;
   border: 1px solid var(--line);
