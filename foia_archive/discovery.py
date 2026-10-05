@@ -11,7 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
-from .source_overrides import curated_sources_for_component
+from .source_overrides import current_source_url, curated_sources_for_component
 from .storage import (
     deactivate_reading_rooms_not_seen,
     get_connection,
@@ -329,7 +329,7 @@ def _urls_in_value(value) -> List[str]:
     if isinstance(value, str):
         normalized = _normalize_source_url(value)
         if normalized:
-            urls.append(normalized)
+            urls.append(current_source_url(normalized))
     elif isinstance(value, dict):
         for nested in value.values():
             urls.extend(_urls_in_value(nested))
