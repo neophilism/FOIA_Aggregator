@@ -120,6 +120,79 @@ class SourceCensusCoverageTests(unittest.TestCase):
             [],
         )
 
+    def test_curated_component_closes_metadata_gap(self):
+        agencies = [
+            {
+                "id": "agency-curated",
+                "attributes": {"name": "Election Assistance Commission"},
+            }
+        ]
+        components = [
+            {
+                "id": "c1efb796-3bb7-4747-a8b7-415992834318",
+                "attributes": {
+                    "title": "U.S. Election Assistance Commission",
+                    "website": {"uri": "https://www.eac.gov/"},
+                },
+                "relationships": {
+                    "agency": {"data": {"id": "agency-curated"}}
+                },
+            }
+        ]
+
+        census = build_component_census(
+            agencies,
+            components,
+            agencies,
+        )
+
+        self.assertEqual(
+            census["summary"]["current_agencies_without_recognized_source"],
+            0,
+        )
+        self.assertEqual(
+            census["components"][0]["recognized_sources"][0]["url"],
+            "https://www.eac.gov/foia/foia-reading-room",
+        )
+        self.assertEqual(
+            census["components"][0]["recognized_sources"][0]["source_type"],
+            "curated_foia",
+        )
+
+    def test_historical_component_is_not_counted_as_current_gap(self):
+        agencies = [
+            {
+                "id": "agency-historical",
+                "attributes": {
+                    "name": "Recovery Accountability and Transparency Board"
+                },
+            }
+        ]
+        components = [
+            {
+                "id": "034ea4e5-220d-497d-9e69-1889f005bc81",
+                "attributes": {
+                    "title": "Recovery Accountability and Transparency Board"
+                },
+                "relationships": {
+                    "agency": {"data": {"id": "agency-historical"}}
+                },
+            }
+        ]
+
+        census = build_component_census(
+            agencies,
+            components,
+            agencies,
+        )
+
+        self.assertEqual(census["summary"]["historical_agencies"], 1)
+        self.assertEqual(census["summary"]["current_agencies"], 0)
+        self.assertEqual(
+            census["summary"]["current_agencies_without_recognized_source"],
+            0,
+        )
+
     def test_candidate_heuristic_excludes_request_forms(self):
         self.assertFalse(
             looks_like_unclassified_source(
@@ -210,6 +283,69 @@ class SourceProbeTests(unittest.TestCase):
 
         self.assertEqual(result.category, "probe_page_too_large")
         self.assertIn("FileTooLarge", result.error)
+
+    def test_transient_503_is_retried_before_probe_classification(self):
+        first = FakeResponse(
+            status_code=503,
+            headers={"Retry-After": "0"},
+        )
+        second = FakeResponse(
+            status_code=200,
+            headers={"Content-Type": "text/html"},
+            html='<a href="/foia/report.pdf">Report</a>',
+        )
+        with (
+            patch(
+                "foia_archive.source_census._request_with_safe_redirects",
+                side_effect=[
+                    (first, "https://agency.gov/foia"),
+                    (second, "https://agency.gov/foia"),
+                ],
+            ) as request,
+            patch("foia_archive.source_census._retry_sleep") as retry_sleep,
+        ):
+            result = probe_source(
+                "https://agency.gov/foia",
+                user_agent="test",
+                max_retries=1,
+                retry_backoff_seconds=0,
+            )
+
+        self.assertEqual(result.category, "document_producing")
+        self.assertEqual(request.call_count, 2)
+        retry_sleep.assert_called_once()
+        self.assertTrue(first.closed)
+        self.assertTrue(second.closed)
+
+    def test_repeated_429_is_classified_after_retry_budget(self):
+        first = FakeResponse(
+            status_code=429,
+            headers={"Retry-After": "0"},
+        )
+        second = FakeResponse(
+            status_code=429,
+            headers={"Retry-After": "0"},
+        )
+        with (
+            patch(
+                "foia_archive.source_census._request_with_safe_redirects",
+                side_effect=[
+                    (first, "https://agency.gov/foia"),
+                    (second, "https://agency.gov/foia"),
+                ],
+            ) as request,
+            patch("foia_archive.source_census._retry_sleep") as retry_sleep,
+        ):
+            result = probe_source(
+                "https://agency.gov/foia",
+                user_agent="test",
+                max_retries=1,
+                retry_backoff_seconds=0,
+            )
+
+        self.assertEqual(result.category, "rate_limited")
+        self.assertEqual(request.call_count, 2)
+        retry_sleep.assert_called_once()
 
     def test_attach_probe_results_counts_categories(self):
         census = {
