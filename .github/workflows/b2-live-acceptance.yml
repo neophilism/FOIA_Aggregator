@@ -1,6 +1,9 @@
 name: B2 live acceptance
 
 on:
+  push:
+    branches:
+      - ops/b2-live-acceptance-run
   workflow_dispatch:
     inputs:
       region:
@@ -23,9 +26,9 @@ jobs:
     env:
       B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
       B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
-      B2_REGION: ${{ inputs.region }}
-      B2_ENDPOINT_URL: ${{ inputs.endpoint_url }}
-      B2_BUCKET: ${{ inputs.bucket_name }}
+      B2_REGION: us-east-005
+      B2_ENDPOINT_URL: https://s3.us-east-005.backblazeb2.com
+      B2_BUCKET: ""
 
     steps:
       - uses: actions/checkout@v4
