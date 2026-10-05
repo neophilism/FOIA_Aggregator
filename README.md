@@ -292,6 +292,22 @@ The homepage statistics are not hard-coded; they report the current database's a
 
 Pagination removes the former silent 200-result ceiling. Full-text search uses SQLite FTS5 while the existing title/filename substring behavior remains available through the same search field.
 
+## Containerized presentation deployment
+
+The repository includes a provider-neutral Docker deployment with separate web and crawler services sharing a persistent local SQLite volume while document binaries live in private Backblaze B2.
+
+Quick start:
+
+```bash
+cp .env.example .env
+# Fill in FOIA_API_KEY and B2 credentials.
+docker compose up -d --build
+```
+
+The web service exposes `/healthz` for deployment health checks. The default demo crawler is live but intentionally conservative: one new/not-yet-archived record per source per six-hour cycle. Already archived records do not consume that quota, so repeated cycles expand the corpus gradually.
+
+See `docs/PRESENTATION_DEPLOYMENT.md` for deployment requirements, initial corpus guidance, backup checks, and the presentation acceptance checklist.
+
 ## Future scope: international access-to-information systems
 
 The MVP is focused on U.S. federal FOIA sources. A future platform expansion should add comparable public-records and access-to-information systems outside the United States, especially jurisdictions where released records or prior request/response logs are publicly searchable.
