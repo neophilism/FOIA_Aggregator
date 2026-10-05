@@ -193,6 +193,21 @@ class SourceCensusCoverageTests(unittest.TestCase):
             0,
         )
 
+    def test_component_without_own_source_is_marked_covered_when_agency_has_source(self):
+        census = build_component_census(
+            self.agencies,
+            self.components,
+            self.agencies,
+        )
+        row = next(
+            item
+            for item in census["components"]
+            if item["component_id"] == "component-3"
+        )
+
+        self.assertEqual(row["coverage_status"], "covered_by_agency")
+        self.assertTrue(row["agency_has_recognized_source"])
+
     def test_candidate_heuristic_excludes_request_forms(self):
         self.assertFalse(
             looks_like_unclassified_source(
