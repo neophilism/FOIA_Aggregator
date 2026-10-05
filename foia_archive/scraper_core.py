@@ -46,7 +46,9 @@ from .storage import (
     update_document_published_date_if_missing,
     update_download_failure,
     update_download_metadata,
+    upsert_document_text,
 )
+from .text_extraction import extract_document_text
 from .utils import Config, clean_filename, logger
 
 
@@ -1271,6 +1273,16 @@ def _process_document_candidate(
     attempted_at = datetime.utcnow().isoformat()
     if result.status == "downloaded" and result.path is not None:
         try:
+            search_config = config.data.get("search") or {}
+            max_indexed_chars = int(
+                search_config.get("max_indexed_chars_per_document", 5_000_000)
+            )
+            extraction = extract_document_text(
+                result.path,
+                file_type,
+                max_chars=max_indexed_chars,
+            )
+
             current_usage = (
                 archived_remote_bytes(conn, archive_storage.name)
                 if archive_storage.name != "local"
@@ -1293,6 +1305,16 @@ def _process_document_candidate(
                 sha256=result.sha256,
                 storage_backend=location.backend,
                 storage_key=location.key,
+            )
+            upsert_document_text(
+                conn,
+                doc_id,
+                body=extraction.text,
+                extraction_status=extraction.status,
+                extraction_error=extraction.error,
+                extracted_at=attempted_at,
+                character_count=extraction.character_count,
+                truncated=extraction.truncated,
             )
         except StorageQuotaReached as exc:
             config.data["_storage_quota_reached"] = True
