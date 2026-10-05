@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from datetime import datetime, timezone
 from typing import Dict, List, Tuple, TypedDict
 from urllib.parse import urlsplit, urlunsplit
@@ -19,10 +20,71 @@ from .storage import (
 from .utils import Config, logger, slugify
 
 
-def fetch_json(url: str, timeout: int, headers: Dict[str, str], params: Dict | None = None) -> Dict:
-    resp = requests.get(url, timeout=timeout, headers=headers, params=params)
-    resp.raise_for_status()
-    return resp.json()
+RETRYABLE_METADATA_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def _metadata_retry_delay(
+    response,
+    attempt: int,
+    base_seconds: float,
+) -> float:
+    retry_after = (getattr(response, "headers", {}) or {}).get("Retry-After")
+    if retry_after:
+        try:
+            return max(0.0, float(retry_after))
+        except ValueError:
+            pass
+    return max(0.0, float(base_seconds)) * (2 ** attempt)
+
+
+def fetch_json(
+    url: str,
+    timeout: int,
+    headers: Dict[str, str],
+    params: Dict | None = None,
+    *,
+    max_retries: int = 4,
+    retry_backoff_seconds: float = 1.0,
+) -> Dict:
+    """Fetch JSON with bounded retries for temporary FOIA.gov failures."""
+    for attempt in range(max_retries + 1):
+        try:
+            resp = requests.get(
+                url,
+                timeout=timeout,
+                headers=headers,
+                params=params,
+            )
+        except (requests.Timeout, requests.ConnectionError):
+            if attempt >= max_retries:
+                raise
+            delay = max(0.0, float(retry_backoff_seconds)) * (2 ** attempt)
+            if delay:
+                time.sleep(delay)
+            continue
+
+        if resp.status_code in RETRYABLE_METADATA_STATUS_CODES:
+            if attempt < max_retries:
+                delay = _metadata_retry_delay(
+                    resp,
+                    attempt,
+                    retry_backoff_seconds,
+                )
+                logger.warning(
+                    "FOIA.gov metadata request returned HTTP %s; retrying in %.1fs (%s/%s)",
+                    resp.status_code,
+                    delay,
+                    attempt + 1,
+                    max_retries,
+                )
+                if delay:
+                    time.sleep(delay)
+                continue
+
+        resp.raise_for_status()
+        return resp.json()
+
+    raise RuntimeError(f"FOIA.gov metadata request retries exhausted for {url}")
 
 
 def _fetch_paginated(
