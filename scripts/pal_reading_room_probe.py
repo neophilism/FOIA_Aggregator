@@ -175,7 +175,14 @@ def summarize(url: str) -> None:
         body = script.get_text("\n", strip=True)
         if not body:
             continue
-        for function_name in ("HeaderClick", "ChildClick"):
+        for function_name in (
+            "HeaderClick",
+            "ChildClick",
+            "PrepareAddList",
+            "showDocs",
+            "download",
+            "btnNextPrevClicked",
+        ):
             match = re.search(
                 rf"function\\s+{function_name}\\s*\\([^)]*\\)\\s*\\{{",
                 body,
