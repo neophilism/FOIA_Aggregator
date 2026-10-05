@@ -1,0 +1,77 @@
+{% extends "base.html" %}
+
+{% block title %}About & coverage — FOIA Aggregator{% endblock %}
+
+{% block content %}
+<section class="about-hero">
+  <p class="eyebrow">About the project</p>
+  <h1>One search across federal records that agencies have already released.</h1>
+  <p class="hero-copy">
+    FOIA Aggregator discovers official agency reading rooms and disclosure libraries, archives released records,
+    preserves source provenance, extracts native document text, and applies OCR to scanned records so material that
+    is public but fragmented across government websites can be searched from one place.
+  </p>
+</section>
+
+<div class="stats" aria-label="Archive statistics">
+  <div class="stat">
+    <span class="stat-value">{{ "{:,}".format(stats.records) }}</span>
+    <span class="stat-label">records discovered</span>
+  </div>
+  <div class="stat">
+    <span class="stat-value">{{ "{:,}".format(stats.archived_records) }}</span>
+    <span class="stat-label">files archived</span>
+  </div>
+  <div class="stat">
+    <span class="stat-value">{{ "{:,}".format(stats.searchable_records) }}</span>
+    <span class="stat-label">full-text searchable</span>
+  </div>
+  <div class="stat">
+    <span class="stat-value">{{ "{:,}".format(stats.ocr_records) }}</span>
+    <span class="stat-label">searchable with OCR help</span>
+  </div>
+</div>
+
+<section class="about-section">
+  <h2>What it does</h2>
+  <p>
+    The platform is focused on records that government agencies have already made public through FOIA reading rooms,
+    electronic libraries, proactive-disclosure pages, and comparable official repositories. It does not file requests
+    on a user's behalf. Instead, it makes already-released material easier to discover across agency boundaries.
+  </p>
+</section>
+
+<section class="about-section">
+  <h2>Coverage</h2>
+  <p>
+    The source-discovery system uses FOIA.gov metadata as its federal backbone, supplemented by verified source
+    corrections and curated coverage where official metadata is incomplete. The current database contains
+    {{ "{:,}".format(stats.agencies) }} agencies, {{ "{:,}".format(stats.offices) }} offices/components, and
+    {{ "{:,}".format(stats.active_sources) }} active official publication sources.
+  </p>
+</section>
+
+<section class="about-section">
+  <h2>Search and preservation</h2>
+  <p>
+    Every archived file retains its government source URL and archive metadata. Born-digital PDFs, DOCX files, and
+    text-like formats can be indexed directly. Image-only PDF pages and common image formats can be OCRed with
+    bounded resource limits. Archived files are content-addressed by SHA-256 when stored in Backblaze B2, reducing
+    duplicate storage while preserving integrity metadata.
+  </p>
+</section>
+
+<section class="about-section">
+  <h2>Design principles</h2>
+  <ul>
+    <li>Official source provenance remains visible.</li>
+    <li>The archived source file remains authoritative; extracted/OCR text is a search aid.</li>
+    <li>Crawling is bounded by source, depth, page count, file size, and rate limits.</li>
+    <li>Search spans agencies by default rather than forcing users to know where a record lives first.</li>
+  </ul>
+</section>
+
+<section class="about-section">
+  <a class="button" href="/">Search the archive</a>
+</section>
+{% endblock %}
