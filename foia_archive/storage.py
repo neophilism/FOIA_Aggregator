@@ -661,7 +661,7 @@ def query_documents(
     return conn.execute("\n".join(query), params).fetchall()
 
 
-def get_archive_stats(conn: sqlite3.Connection) -> Dict[str, int]:
+def get_archive_stats(conn: sqlite3.Connection) -> Dict[str, Any]:
     """Return live, presentation-safe archive statistics."""
     row = conn.execute(
         """
@@ -691,10 +691,20 @@ def get_archive_stats(conn: sqlite3.Connection) -> Dict[str, int]:
                 WHERE extraction_status IN ('indexed', 'indexed_truncated')
                   AND extraction_method IN ('ocr', 'mixed')
                   AND COALESCE(body, '') != ''
-            ) AS ocr_records
+            ) AS ocr_records,
+            (
+                SELECT MAX(ts)
+                FROM (
+                    SELECT MAX(discovered_at) AS ts FROM documents
+                    UNION ALL
+                    SELECT MAX(downloaded_at) AS ts FROM documents
+                    UNION ALL
+                    SELECT MAX(extracted_at) AS ts FROM document_text
+                )
+            ) AS latest_activity_at
         """
     ).fetchone()
-    return {
+    stats: Dict[str, Any] = {
         key: int(row[key] or 0)
         for key in (
             "agencies",
@@ -706,6 +716,8 @@ def get_archive_stats(conn: sqlite3.Connection) -> Dict[str, int]:
             "ocr_records",
         )
     }
+    stats["latest_activity_at"] = row["latest_activity_at"]
+    return stats
 
 
 def query_document_snippets(
