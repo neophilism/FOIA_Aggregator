@@ -54,8 +54,8 @@ class DatabaseDurabilityTests(unittest.TestCase):
         finally:
             conn.close()
 
-        self.assertEqual([row["version"] for row in rows], [1, 2, 3, 4, 5])
-        self.assertEqual(version, 5)
+        self.assertEqual([row["version"] for row in rows], [1, 2, 3, 4, 5, 6])
+        self.assertEqual(version, 6)
 
     def test_expected_query_indexes_are_created(self):
         init_db(self.db_path, self.files_dir)
