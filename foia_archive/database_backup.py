@@ -47,9 +47,9 @@ def _snapshot_sqlite(source_path: Path, destination_path: Path) -> None:
 
 def _gzip_file(source_path: Path, destination_path: Path) -> str:
     digest = hashlib.sha256()
-    with source_path.open("rb") as source, gzip.open(
-        destination_path,
-        "wb",
+    with source_path.open("rb") as source, gzip.GzipFile(
+        filename=str(destination_path),
+        mode="wb",
         compresslevel=6,
         mtime=0,
     ) as target:
