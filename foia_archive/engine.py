@@ -88,8 +88,23 @@ def run_once(
             "(refresh cadence not yet due)"
         )
 
-    rooms = get_reading_rooms_to_crawl(cfg)
-    logger.info("Crawling %s reading rooms", len(rooms))
+    source_limit_raw = cfg.crawler.get("source_limit")
+    source_limit = None
+    if source_limit_raw is not None:
+        try:
+            parsed_limit = int(source_limit_raw)
+            source_limit = parsed_limit if parsed_limit > 0 else None
+        except (TypeError, ValueError):
+            logger.warning(
+                "Invalid crawler.source_limit; crawling all eligible sources"
+            )
+
+    rooms = get_reading_rooms_to_crawl(cfg, limit=source_limit)
+    logger.info(
+        "Crawling %s reading rooms%s",
+        len(rooms),
+        f" (source limit {source_limit})" if source_limit else "",
+    )
 
     dry_run_flag = cfg.crawler.get("dry_run", True)
     max_docs = cfg.crawler.get("max_docs_per_source")
