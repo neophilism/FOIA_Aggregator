@@ -19,11 +19,14 @@ from .source_overrides import (
 from .scraper_core import (
     FileTooLarge,
     HostRateLimiter,
+    RETRYABLE_STATUS_CODES,
     UnsafeURL,
+    _close_response,
     _content_type,
     _crawl_scope,
     _read_limited_text,
     _request_with_safe_redirects,
+    _retry_sleep,
     extract_crawl_targets,
     extract_document_links,
 )
@@ -333,169 +336,231 @@ def probe_source(
     max_redirects: int = 5,
     max_html_bytes: int = 256 * 1024,
     rate_limiter: Optional[HostRateLimiter] = None,
+    max_retries: int = 2,
+    retry_backoff_seconds: float = 0.5,
+    max_retry_delay_seconds: float = 10.0,
 ) -> ProbeResult:
     """Probe one known source root without performing an archive crawl."""
     response = None
-    try:
-        response, final_url = _request_with_safe_redirects(
-            url,
-            headers={"User-Agent": user_agent},
-            timeout=timeout,
-            max_redirects=max_redirects,
-            rate_limiter=rate_limiter,
-        )
-        status_code = getattr(response, "status_code", None)
-        mime_type = _content_type(response) or None
+    final_url: Optional[str] = None
 
-        if status_code in {401, 403}:
-            return ProbeResult(
-                url=url,
-                final_url=final_url,
-                category="blocked",
-                status_code=status_code,
-                mime_type=mime_type,
-                direct_document_links=0,
-                crawlable_page_links=0,
-                adapter_hints=(),
-                error=None,
-            )
-        if status_code == 429:
-            return ProbeResult(
-                url=url,
-                final_url=final_url,
-                category="rate_limited",
-                status_code=status_code,
-                mime_type=mime_type,
-                direct_document_links=0,
-                crawlable_page_links=0,
-                adapter_hints=(),
-                error=None,
-            )
-        if status_code in {404, 410}:
-            return ProbeResult(
-                url=url,
-                final_url=final_url,
-                category="dead",
-                status_code=status_code,
-                mime_type=mime_type,
-                direct_document_links=0,
-                crawlable_page_links=0,
-                adapter_hints=(),
-                error=None,
-            )
-        if status_code is not None and status_code >= 500:
-            return ProbeResult(
-                url=url,
-                final_url=final_url,
-                category="server_error",
-                status_code=status_code,
-                mime_type=mime_type,
-                direct_document_links=0,
-                crawlable_page_links=0,
-                adapter_hints=(),
-                error=None,
-            )
-        if status_code is not None and not 200 <= status_code < 300:
-            return ProbeResult(
-                url=url,
-                final_url=final_url,
-                category="http_error",
-                status_code=status_code,
-                mime_type=mime_type,
-                direct_document_links=0,
-                crawlable_page_links=0,
-                adapter_hints=(),
-                error=None,
-            )
-
-        if mime_type and mime_type not in {"text/html", "application/xhtml+xml"}:
-            return ProbeResult(
-                url=url,
-                final_url=final_url,
-                category="reachable_non_html",
-                status_code=status_code,
-                mime_type=mime_type,
-                direct_document_links=0,
-                crawlable_page_links=0,
-                adapter_hints=(),
-                error=None,
-            )
-
-        html = _read_limited_text(response, max_html_bytes)
-        documents = extract_document_links(html, final_url)
+    for attempt in range(max_retries + 1):
         try:
-            scope = _crawl_scope(final_url)
-            crawl_targets = extract_crawl_targets(
-                html,
-                final_url,
-                scope,
-                depth=1,
+            response, final_url = _request_with_safe_redirects(
+                url,
+                headers={"User-Agent": user_agent},
+                timeout=timeout,
+                max_redirects=max_redirects,
+                rate_limiter=rate_limiter,
             )
-        except Exception:
-            crawl_targets = []
-        hints = _adapter_hints(final_url, html)
+            status_code = getattr(response, "status_code", None)
+            mime_type = _content_type(response) or None
 
-        if documents:
-            category = "document_producing"
-        elif hints:
-            category = "adapter_candidate"
-        elif crawl_targets:
-            category = "reachable_navigable"
-        else:
-            category = "reachable_no_links"
+            if status_code in RETRYABLE_STATUS_CODES:
+                headers_map = getattr(response, "headers", {}) or {}
+                retry_after = (
+                    headers_map.get("Retry-After")
+                    or headers_map.get("retry-after")
+                )
+                rate_limit_reset = (
+                    headers_map.get("X-RateLimit-Reset")
+                    or headers_map.get("x-ratelimit-reset")
+                    or headers_map.get("X-Rate-Limit-Reset")
+                )
+                if attempt < max_retries:
+                    _close_response(response)
+                    response = None
+                    _retry_sleep(
+                        attempt,
+                        retry_backoff_seconds,
+                        retry_after=retry_after,
+                        rate_limit_reset=rate_limit_reset,
+                        max_delay_seconds=max_retry_delay_seconds,
+                    )
+                    continue
 
-        return ProbeResult(
-            url=url,
-            final_url=final_url,
-            category=category,
-            status_code=status_code,
-            mime_type=mime_type,
-            direct_document_links=len(documents),
-            crawlable_page_links=len(crawl_targets),
-            adapter_hints=hints,
-            error=None,
-        )
-    except UnsafeURL as exc:
-        return ProbeResult(
-            url=url,
-            final_url=None,
-            category="blocked_by_safety",
-            status_code=None,
-            mime_type=None,
-            direct_document_links=0,
-            crawlable_page_links=0,
-            adapter_hints=(),
-            error=f"{type(exc).__name__}: {exc}",
-        )
-    except FileTooLarge as exc:
-        return ProbeResult(
-            url=url,
-            final_url=None,
-            category="probe_page_too_large",
-            status_code=None,
-            mime_type=None,
-            direct_document_links=0,
-            crawlable_page_links=0,
-            adapter_hints=(),
-            error=f"{type(exc).__name__}: {exc}",
-        )
-    except (requests.RequestException, OSError) as exc:
-        return ProbeResult(
-            url=url,
-            final_url=None,
-            category="request_error",
-            status_code=None,
-            mime_type=None,
-            direct_document_links=0,
-            crawlable_page_links=0,
-            adapter_hints=(),
-            error=f"{type(exc).__name__}: {exc}",
-        )
-    finally:
-        if response is not None:
-            close = getattr(response, "close", None)
-            if callable(close):
-                close()
+            if status_code in {401, 403}:
+                return ProbeResult(
+                    url=url,
+                    final_url=final_url,
+                    category="blocked",
+                    status_code=status_code,
+                    mime_type=mime_type,
+                    direct_document_links=0,
+                    crawlable_page_links=0,
+                    adapter_hints=(),
+                    error=None,
+                )
+            if status_code == 429:
+                return ProbeResult(
+                    url=url,
+                    final_url=final_url,
+                    category="rate_limited",
+                    status_code=status_code,
+                    mime_type=mime_type,
+                    direct_document_links=0,
+                    crawlable_page_links=0,
+                    adapter_hints=(),
+                    error=None,
+                )
+            if status_code in {404, 410}:
+                return ProbeResult(
+                    url=url,
+                    final_url=final_url,
+                    category="dead",
+                    status_code=status_code,
+                    mime_type=mime_type,
+                    direct_document_links=0,
+                    crawlable_page_links=0,
+                    adapter_hints=(),
+                    error=None,
+                )
+            if status_code is not None and status_code >= 500:
+                return ProbeResult(
+                    url=url,
+                    final_url=final_url,
+                    category="server_error",
+                    status_code=status_code,
+                    mime_type=mime_type,
+                    direct_document_links=0,
+                    crawlable_page_links=0,
+                    adapter_hints=(),
+                    error=None,
+                )
+            if status_code is not None and not 200 <= status_code < 300:
+                return ProbeResult(
+                    url=url,
+                    final_url=final_url,
+                    category="http_error",
+                    status_code=status_code,
+                    mime_type=mime_type,
+                    direct_document_links=0,
+                    crawlable_page_links=0,
+                    adapter_hints=(),
+                    error=None,
+                )
+
+            if mime_type and mime_type not in {
+                "text/html",
+                "application/xhtml+xml",
+            }:
+                return ProbeResult(
+                    url=url,
+                    final_url=final_url,
+                    category="reachable_non_html",
+                    status_code=status_code,
+                    mime_type=mime_type,
+                    direct_document_links=0,
+                    crawlable_page_links=0,
+                    adapter_hints=(),
+                    error=None,
+                )
+
+            html = _read_limited_text(response, max_html_bytes)
+            documents = extract_document_links(html, final_url)
+            try:
+                scope = _crawl_scope(final_url)
+                crawl_targets = extract_crawl_targets(
+                    html,
+                    final_url,
+                    scope,
+                    depth=1,
+                )
+            except Exception:
+                crawl_targets = []
+            hints = _adapter_hints(final_url, html)
+
+            if documents:
+                category = "document_producing"
+            elif hints:
+                category = "adapter_candidate"
+            elif crawl_targets:
+                category = "reachable_navigable"
+            else:
+                category = "reachable_no_links"
+
+            return ProbeResult(
+                url=url,
+                final_url=final_url,
+                category=category,
+                status_code=status_code,
+                mime_type=mime_type,
+                direct_document_links=len(documents),
+                crawlable_page_links=len(crawl_targets),
+                adapter_hints=hints,
+                error=None,
+            )
+        except UnsafeURL as exc:
+            return ProbeResult(
+                url=url,
+                final_url=final_url,
+                category="blocked_by_safety",
+                status_code=None,
+                mime_type=None,
+                direct_document_links=0,
+                crawlable_page_links=0,
+                adapter_hints=(),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        except FileTooLarge as exc:
+            return ProbeResult(
+                url=url,
+                final_url=final_url,
+                category="probe_page_too_large",
+                status_code=None,
+                mime_type=None,
+                direct_document_links=0,
+                crawlable_page_links=0,
+                adapter_hints=(),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        except (requests.Timeout, requests.ConnectionError, OSError) as exc:
+            if attempt < max_retries:
+                _retry_sleep(
+                    attempt,
+                    retry_backoff_seconds,
+                    max_delay_seconds=max_retry_delay_seconds,
+                )
+                continue
+            return ProbeResult(
+                url=url,
+                final_url=final_url,
+                category="request_error",
+                status_code=None,
+                mime_type=None,
+                direct_document_links=0,
+                crawlable_page_links=0,
+                adapter_hints=(),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        except requests.RequestException as exc:
+            return ProbeResult(
+                url=url,
+                final_url=final_url,
+                category="request_error",
+                status_code=None,
+                mime_type=None,
+                direct_document_links=0,
+                crawlable_page_links=0,
+                adapter_hints=(),
+                error=f"{type(exc).__name__}: {exc}",
+            )
+        finally:
+            if response is not None:
+                _close_response(response)
+                response = None
+
+    return ProbeResult(
+        url=url,
+        final_url=final_url,
+        category="request_error",
+        status_code=None,
+        mime_type=None,
+        direct_document_links=0,
+        crawlable_page_links=0,
+        adapter_hints=(),
+        error="Probe retries exhausted",
+    )
 
 
 def attach_probe_results(
