@@ -148,6 +148,7 @@ SOURCE_TYPE_PRIORITY = {
     "foia_library": 1,
     "proactive_disclosure": 2,
     "frequently_requested_records": 3,
+    "foia_website": 4,
 }
 
 
@@ -215,12 +216,43 @@ def _urls_in_value(value) -> List[str]:
     return urls
 
 
+FOIA_WEBSITE_EXCLUDED_PATH_TERMS = {
+    "request",
+    "submit",
+    "submission",
+    "status",
+    "tracking",
+    "track",
+}
+
+
+def _is_foia_website_fallback(url: str) -> bool:
+    """Return True for a component website that is clearly its FOIA landing page."""
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+
+    path = (parsed.path or "/").lower()
+    normalized = re.sub(r"[^a-z0-9]+", "-", path).strip("-")
+    tokens = {token for token in normalized.split("-") if token}
+
+    if tokens & FOIA_WEBSITE_EXCLUDED_PATH_TERMS:
+        return False
+
+    return (
+        "foia" in tokens
+        or "freedom-of-information" in normalized
+    )
+
+
 def extract_reading_room_sources(attrs: Dict) -> List[SourceCandidate]:
     """Extract only URLs explicitly identified as FOIA publication sources.
 
-    General websites, request forms, generic resources, and unrelated links are
-    deliberately ignored. Unknown fields remain unknown rather than being
-    guessed into the crawl set.
+    Explicit reading-room/library/disclosure fields are preferred. If none are
+    present, a component website is accepted only when its URL path is clearly
+    FOIA-related and not a request/status/submission endpoint. Other general
+    websites, request forms, generic resources, and unrelated links are ignored.
     """
     candidates: Dict[str, str] = {}
 
@@ -243,6 +275,15 @@ def extract_reading_room_sources(attrs: Dict) -> List[SourceCandidate]:
                 walk(nested)
 
     walk(attrs)
+
+    # Some FOIA.gov components omit reading_rooms but identify their FOIA
+    # landing page as the component website. Use that only as a fallback, and
+    # only when the URL path itself is unambiguously FOIA-related.
+    if not candidates:
+        for url in _urls_in_value(attrs.get("website")):
+            if _is_foia_website_fallback(url):
+                candidates[url] = "foia_website"
+
     return [
         {"url": url, "source_type": candidates[url]}
         for url in sorted(candidates)
