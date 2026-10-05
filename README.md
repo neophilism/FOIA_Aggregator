@@ -277,13 +277,18 @@ When running locally, open http://127.0.0.1:8000/. In GitHub Codespaces, open th
 
 The default search spans all agencies and offices. Selecting an agency or office only narrows the result set.
 
-The MVP UI supports:
-- full-text search across titles, filenames, extracted PDF/DOCX/text content, and OCR text
-- agency, office, file-type, and published-date filters
+The public UI is presentation-oriented rather than a database table. It includes:
+- a prominent cross-agency full-text search
+- live archive statistics derived from the SQLite database
+- collapsible agency, office, file-type, date, sorting, and page-size filters
+- result cards with bounded body-text snippets when a query matched inside a document
 - result counts and 25/50/100-row pagination
-- sorting by discovery date, publication date, or title
-- explicit download-status/error badges
-- direct archived-file and original-source links
+- direct links to the archived copy and original government source
+- per-record detail pages at `/record/{document_id}`
+- source provenance, integrity/file metadata, and extraction/OCR metadata on record pages
+- a public `/about` page explaining scope, coverage, preservation, and search methodology
+
+The homepage statistics are not hard-coded; they report the current database's agencies, active official sources, discovered records, archived records, full-text searchable records, and OCR-assisted records. Search snippets use SQLite FTS5's bounded `snippet()` function so a results page does not load entire indexed documents into memory.
 
 Pagination removes the former silent 200-result ceiling. Full-text search uses SQLite FTS5 while the existing title/filename substring behavior remains available through the same search field.
 
