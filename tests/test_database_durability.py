@@ -177,7 +177,7 @@ class DatabaseDurabilityTests(unittest.TestCase):
             conn.close()
 
         self.assertEqual(count, 0)
-        self.assertEqual(version, 5)
+        self.assertEqual(version, 6)
 
 
 class DocumentSourceRelationshipTests(unittest.TestCase):
