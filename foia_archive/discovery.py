@@ -96,7 +96,7 @@ def fetch_json(
             if attempt >= max_retries:
                 raise
             delay = min(
-                max_retry_delay_seconds,
+                max(0.0, float(max_retry_delay_seconds)),
                 max(0.0, float(retry_backoff_seconds)) * (2 ** attempt),
             )
             logger.warning(
@@ -138,7 +138,7 @@ def fetch_json(
                 if attempt >= max_retries:
                     raise
                 delay = min(
-                    max_retry_delay_seconds,
+                    max(0.0, float(max_retry_delay_seconds)),
                     max(0.0, float(retry_backoff_seconds)) * (2 ** attempt),
                 )
                 logger.warning(
