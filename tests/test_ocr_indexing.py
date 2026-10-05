@@ -17,8 +17,11 @@ from foia_archive.storage import (
 from foia_archive.text_extraction import (
     OCRSettings,
     OCRUnavailable,
+    TextExtractionResult,
     extract_document_text,
 )
+from foia_archive.text_index import reindex_downloaded_documents
+from foia_archive.utils import Config
 
 
 class OCRSettingsTests(unittest.TestCase):
@@ -192,6 +195,102 @@ class OCRIndexPersistenceTests(unittest.TestCase):
             self.conn,
             title_query="optical recognition",
         )
+
+        self.assertEqual(row["extraction_method"], "ocr")
+        self.assertEqual([item["id"] for item in results], [document_id])
+
+
+class LegacyOCRCandidateReindexTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        root = Path(self.tempdir.name)
+        self.db_path = root / "archive.db"
+        self.files_dir = root / "files"
+        init_db(self.db_path, self.files_dir)
+        self.config = Config(
+            {
+                "storage": {
+                    "backend": "local",
+                    "db_path": str(self.db_path),
+                    "files_dir": str(self.files_dir),
+                },
+                "search": {
+                    "max_indexed_chars_per_document": 100000,
+                },
+                "ocr": {
+                    "enabled": True,
+                },
+            }
+        )
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def test_legacy_unsupported_image_is_reindexed_without_force(self):
+        archive_path = self.files_dir / "legacy" / "scan.png"
+        archive_path.parent.mkdir(parents=True)
+        Image.new("RGB", (100, 100), "white").save(archive_path)
+
+        conn = get_connection(self.db_path)
+        try:
+            document_id = insert_document(
+                conn,
+                url="https://example.gov/legacy-scan.png",
+                title="Legacy scan",
+                file_type="png",
+                filename="scan.png",
+                agency_id=None,
+                office_id=None,
+                reading_room_id=None,
+                discovered_at="2026-10-05T00:00:00",
+            )
+            conn.execute(
+                """
+                UPDATE documents
+                SET download_status = 'downloaded',
+                    local_path = ?,
+                    storage_backend = 'local',
+                    storage_key = ?
+                WHERE id = ?
+                """,
+                ("legacy/scan.png", "legacy/scan.png", document_id),
+            )
+            conn.commit()
+            upsert_document_text(
+                conn,
+                document_id,
+                body="",
+                extraction_status="unsupported",
+                extraction_method=None,
+                extracted_at="2026-10-05T00:01:00",
+            )
+        finally:
+            conn.close()
+
+        with patch(
+            "foia_archive.text_index.extract_document_text",
+            return_value=TextExtractionResult(
+                status="indexed",
+                text="legacy scan searchable after OCR upgrade",
+                method="ocr",
+                character_count=40,
+            ),
+        ) as extract:
+            summary = reindex_downloaded_documents(self.config)
+
+        self.assertEqual(summary.attempted, 1)
+        self.assertEqual(summary.indexed, 1)
+        extract.assert_called_once()
+
+        conn = get_connection(self.db_path)
+        try:
+            row = get_document_text(conn, document_id)
+            results = query_documents(
+                conn,
+                title_query="searchable after OCR",
+            )
+        finally:
+            conn.close()
 
         self.assertEqual(row["extraction_method"], "ocr")
         self.assertEqual([item["id"] for item in results], [document_id])
