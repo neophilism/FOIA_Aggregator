@@ -794,24 +794,29 @@ def update_download_failure(
     error: str,
     attempted_at: str,
 ) -> None:
-    conn.execute(
-        """
-        UPDATE documents
-        SET local_path = NULL,
-            storage_backend = NULL,
-            storage_key = NULL,
-            downloaded_at = NULL,
-            mime_type = NULL,
-            file_size = NULL,
-            sha256 = NULL,
-            download_status = ?,
-            download_error = ?,
-            last_download_attempt_at = ?
-        WHERE id = ?
-        """,
-        (status, error, attempted_at, document_id),
-    )
-    conn.commit()
+    with conn:
+        conn.execute(
+            """
+            UPDATE documents
+            SET local_path = NULL,
+                storage_backend = NULL,
+                storage_key = NULL,
+                downloaded_at = NULL,
+                mime_type = NULL,
+                file_size = NULL,
+                sha256 = NULL,
+                download_status = ?,
+                download_error = ?,
+                last_download_attempt_at = ?
+            WHERE id = ?
+            """,
+            (status, error, attempted_at, document_id),
+        )
+        conn.execute("DELETE FROM document_fts WHERE rowid = ?", (document_id,))
+        conn.execute(
+            "DELETE FROM document_text WHERE document_id = ?",
+            (document_id,),
+        )
 
 
 def archived_remote_bytes(conn: sqlite3.Connection, backend: str) -> int:
