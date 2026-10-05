@@ -163,6 +163,22 @@ def _migration_5_full_text_search(conn: sqlite3.Connection) -> None:
     conn.execute(models.DOCUMENT_FTS_DELETE_TRIGGER)
 
 
+def _migration_6_extraction_method(conn: sqlite3.Connection) -> None:
+    _ensure_columns(
+        conn,
+        "document_text",
+        {"extraction_method": "TEXT"},
+    )
+    conn.execute(
+        """
+        UPDATE document_text
+        SET extraction_method = 'native_text'
+        WHERE extraction_method IS NULL
+          AND extraction_status IN ('indexed', 'indexed_truncated')
+        """
+    )
+
+
 MIGRATIONS: Tuple[
     Tuple[int, str, Callable[[sqlite3.Connection], None]],
     ...,
@@ -172,6 +188,7 @@ MIGRATIONS: Tuple[
     (3, "archive query indexes", _migration_3_indexes),
     (4, "archive storage backends", _migration_4_archive_storage),
     (5, "document full text search", _migration_5_full_text_search),
+    (6, "text extraction method", _migration_6_extraction_method),
 )
 
 
@@ -690,6 +707,7 @@ def upsert_document_text(
     extraction_status: str,
     extracted_at: str,
     extraction_error: Optional[str] = None,
+    extraction_method: Optional[str] = None,
     character_count: Optional[int] = None,
     truncated: bool = False,
 ) -> None:
@@ -705,15 +723,17 @@ def upsert_document_text(
                 body,
                 extraction_status,
                 extraction_error,
+                extraction_method,
                 extracted_at,
                 character_count,
                 truncated
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(document_id) DO UPDATE SET
                 body = excluded.body,
                 extraction_status = excluded.extraction_status,
                 extraction_error = excluded.extraction_error,
+                extraction_method = excluded.extraction_method,
                 extracted_at = excluded.extracted_at,
                 character_count = excluded.character_count,
                 truncated = excluded.truncated
@@ -723,6 +743,7 @@ def upsert_document_text(
                 body,
                 extraction_status,
                 extraction_error,
+                extraction_method,
                 extracted_at,
                 int(character_count),
                 1 if truncated else 0,
