@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+import sqlite3
 from typing import Optional
 
 from .discovery import refresh_metadata
@@ -103,6 +104,14 @@ def run_once(
                 max_docs=max_docs,
                 rate_limiter=rate_limiter,
             )
+        except sqlite3.Error as exc:
+            logger.exception(
+                "Database failure while crawling reading room %s; aborting "
+                "this cycle for controlled daemon retry: %s",
+                rr["id"],
+                exc,
+            )
+            raise
         except Exception as exc:
             logger.exception(
                 "Unexpected crawl failure for reading room %s; continuing "
