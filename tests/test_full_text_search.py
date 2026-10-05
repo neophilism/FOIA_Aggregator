@@ -13,6 +13,7 @@ from foia_archive.storage import (
     init_db,
     insert_document,
     query_documents,
+    update_download_failure,
     upsert_document_text,
 )
 from foia_archive.text_extraction import extract_document_text
@@ -113,6 +114,31 @@ class FullTextSearchTests(unittest.TestCase):
 
         self.assertEqual(old_rows, [])
         self.assertEqual([row["id"] for row in new_rows], [doc_id])
+
+    def test_download_failure_clears_stale_full_text(self):
+        doc_id = self._insert()
+        now = datetime.now(timezone.utc).isoformat()
+        upsert_document_text(
+            self.conn,
+            doc_id,
+            body="stale body should disappear",
+            extraction_status="indexed",
+            extracted_at=now,
+        )
+
+        update_download_failure(
+            self.conn,
+            doc_id,
+            "http_error",
+            "redownload failed",
+            now,
+        )
+
+        self.assertEqual(
+            query_documents(self.conn, title_query="stale body"),
+            [],
+        )
+        self.assertIsNone(get_document_text(self.conn, doc_id))
 
     def test_nonindexed_status_removes_previous_fts_body(self):
         doc_id = self._insert()
