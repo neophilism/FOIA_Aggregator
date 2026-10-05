@@ -11,7 +11,8 @@ import tempfile
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Deque, Dict, List, Optional, Set, TypedDict
 from urllib.parse import unquote, urljoin, urlparse, urlunparse
@@ -643,17 +644,57 @@ def _stream_response_to_file(
                 pass
 
 
+def _retry_delay(
+    attempt: int,
+    base_seconds: float,
+    retry_after: Optional[str] = None,
+    rate_limit_reset: Optional[str] = None,
+    max_delay_seconds: float = 60.0,
+) -> float:
+    delay = max(0.0, float(base_seconds)) * (2 ** attempt)
+
+    hinted_delay: Optional[float] = None
+    if retry_after:
+        try:
+            hinted_delay = max(0.0, float(retry_after))
+        except ValueError:
+            try:
+                retry_at = parsedate_to_datetime(retry_after)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                hinted_delay = max(
+                    0.0,
+                    retry_at.timestamp() - datetime.now(timezone.utc).timestamp(),
+                )
+            except (TypeError, ValueError, OverflowError):
+                hinted_delay = None
+
+    if hinted_delay is None and rate_limit_reset:
+        try:
+            hinted_delay = max(0.0, float(rate_limit_reset) - time.time())
+        except ValueError:
+            hinted_delay = None
+
+    if hinted_delay is not None:
+        delay = max(delay, hinted_delay)
+
+    return min(max(0.0, float(max_delay_seconds)), delay)
+
+
 def _retry_sleep(
     attempt: int,
     base_seconds: float,
     retry_after: Optional[str] = None,
+    rate_limit_reset: Optional[str] = None,
+    max_delay_seconds: float = 60.0,
 ) -> None:
-    delay = max(0.0, float(base_seconds)) * (2 ** attempt)
-    if retry_after:
-        try:
-            delay = max(delay, float(retry_after))
-        except ValueError:
-            pass
+    delay = _retry_delay(
+        attempt,
+        base_seconds,
+        retry_after=retry_after,
+        rate_limit_reset=rate_limit_reset,
+        max_delay_seconds=max_delay_seconds,
+    )
     if delay > 0:
         time.sleep(delay)
 
@@ -701,6 +742,9 @@ def _fetch_crawl_resource(
     max_redirects = int(config.downloader.get("max_redirects", 5))
     max_retries = int(config.downloader.get("max_retries", 3))
     backoff = float(config.downloader.get("retry_backoff_seconds", 1))
+    max_retry_delay = float(
+        config.downloader.get("max_retry_delay_seconds", 60)
+    )
 
     for attempt in range(max_retries + 1):
         response = None
@@ -716,10 +760,21 @@ def _fetch_crawl_resource(
             if status_code in RETRYABLE_STATUS_CODES:
                 headers_map = getattr(response, "headers", {}) or {}
                 retry_after = headers_map.get("Retry-After") or headers_map.get("retry-after")
+                rate_limit_reset = (
+                    headers_map.get("X-RateLimit-Reset")
+                    or headers_map.get("x-ratelimit-reset")
+                    or headers_map.get("X-Rate-Limit-Reset")
+                )
                 _close_response(response)
                 response = None
                 if attempt < max_retries:
-                    _retry_sleep(attempt, backoff, retry_after)
+                    _retry_sleep(
+                        attempt,
+                        backoff,
+                        retry_after=retry_after,
+                        rate_limit_reset=rate_limit_reset,
+                        max_delay_seconds=max_retry_delay,
+                    )
                     continue
                 raise requests.HTTPError(
                     f"HTTP {status_code} while crawling {final_url}"
@@ -755,6 +810,9 @@ def download_document(
     max_redirects = int(config.downloader.get("max_redirects", 5))
     max_retries = int(config.downloader.get("max_retries", 3))
     backoff = float(config.downloader.get("retry_backoff_seconds", 1))
+    max_retry_delay = float(
+        config.downloader.get("max_retry_delay_seconds", 60)
+    )
     max_file_size_mb = float(config.downloader.get("max_file_size_mb", 100))
     max_bytes = max(1, int(max_file_size_mb * 1024 * 1024))
 
@@ -773,10 +831,21 @@ def download_document(
                 error = f"HTTP {status_code} while downloading {final_url}"
                 headers_map = getattr(response, "headers", {}) or {}
                 retry_after = headers_map.get("Retry-After") or headers_map.get("retry-after")
+                rate_limit_reset = (
+                    headers_map.get("X-RateLimit-Reset")
+                    or headers_map.get("x-ratelimit-reset")
+                    or headers_map.get("X-Rate-Limit-Reset")
+                )
                 _close_response(response)
                 response = None
                 if attempt < max_retries:
-                    _retry_sleep(attempt, backoff, retry_after)
+                    _retry_sleep(
+                        attempt,
+                        backoff,
+                        retry_after=retry_after,
+                        rate_limit_reset=rate_limit_reset,
+                        max_delay_seconds=max_retry_delay,
+                    )
                     continue
                 return DownloadResult(status="http_error", error=error)
 
