@@ -65,12 +65,21 @@ def load_config(path: str, overrides: Optional[Dict[str, Any]] = None) -> Config
     env_dry_run = (os.getenv("FOIA_CRAWLER_DRY_RUN") or "").strip()
     env_max_docs = (os.getenv("FOIA_MAX_DOCS_PER_SOURCE") or "").strip()
     env_interval = (os.getenv("FOIA_CRAWLER_INTERVAL_HOURS") or "").strip()
+    env_source_limit = (os.getenv("FOIA_SOURCE_LIMIT") or "").strip()
+    env_max_pages = (os.getenv("FOIA_MAX_PAGES_PER_SOURCE") or "").strip()
+    env_max_depth = (os.getenv("FOIA_MAX_DEPTH") or "").strip()
     if env_dry_run:
         crawler["dry_run"] = parse_bool(env_dry_run)
     if env_max_docs:
         crawler["max_docs_per_source"] = max(0, int(env_max_docs))
     if env_interval:
         crawler["interval_hours"] = float(env_interval)
+    if env_source_limit:
+        crawler["source_limit"] = max(0, int(env_source_limit))
+    if env_max_pages:
+        crawler["max_pages_per_source"] = max(1, int(env_max_pages))
+    if env_max_depth:
+        crawler["max_depth"] = max(0, int(env_max_depth))
 
     overrides = overrides or {}
     for section, values in overrides.items():
