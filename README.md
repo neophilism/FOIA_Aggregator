@@ -127,3 +127,9 @@ The MVP UI supports:
 - direct archived-file and original-source links
 
 Pagination removes the former silent 200-result ceiling. Title search is metadata-only for the MVP; full document-body search/OCR remains a later phase.
+
+## Future scope: international access-to-information systems
+
+The MVP is focused on U.S. federal FOIA sources. A future platform expansion should add comparable public-records and access-to-information systems outside the United States, especially jurisdictions where released records or prior request/response logs are publicly searchable.
+
+Initial candidates include Australia, Brazil, Mexico, France, Canada, Ireland, Norway, Sweden, New Zealand, and the United Kingdom. International coverage should preserve each jurisdiction's own terminology, provenance, disclosure rules, and legal context rather than assuming every system operates like U.S. FOIA.
