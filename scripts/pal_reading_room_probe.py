@@ -98,6 +98,24 @@ def summarize(url: str) -> None:
         body = script.get_text("\n", strip=True)
         if not body:
             continue
+        for function_name in ("HeaderClick", "ChildClick"):
+            match = re.search(
+                rf"function\\s+{function_name}\\s*\\([^)]*\\)\\s*\\{{",
+                body,
+                flags=re.IGNORECASE,
+            )
+            if match:
+                print(
+                    f"{function_name.upper()}_BLOCK",
+                    body[match.start():match.start() + 5000],
+                )
+        for hidden_match in re.finditer("hidDocTypes", body, flags=re.IGNORECASE):
+            start = max(0, hidden_match.start() - 800)
+            end = min(len(body), hidden_match.end() + 1200)
+            snippet = body[start:end]
+            if "fnSearch" not in snippet:
+                print("HIDDOCTYPES_CONTEXT", snippet)
+
         lower = body.lower()
         fn_index = lower.find("function fnsearch")
         if fn_index >= 0:
