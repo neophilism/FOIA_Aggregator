@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import os
+import re
 from dataclasses import dataclass
+from functools import lru_cache
 from pathlib import Path
 from typing import Optional
 
 import boto3
+import requests
 from botocore.exceptions import ClientError
 
 from .utils import Config
@@ -228,6 +231,141 @@ class B2ArchiveStorage(ArchiveStorage):
             ) from exc
 
 
+B2_AUTHORIZE_URL = "https://api.backblazeb2.com/b2api/v4/b2_authorize_account"
+
+
+def _region_from_b2_endpoint(endpoint_url: str) -> str:
+    match = re.match(
+        r"^https?://s3\.([a-z0-9-]+)\.backblazeb2\.com/?$",
+        (endpoint_url or "").strip(),
+        flags=re.IGNORECASE,
+    )
+    return match.group(1) if match else ""
+
+
+@lru_cache(maxsize=4)
+def _authorize_b2_scope(
+    key_id: str,
+    application_key: str,
+) -> dict:
+    """Resolve the storage scope for a Backblaze application key."""
+    try:
+        response = requests.get(
+            B2_AUTHORIZE_URL,
+            auth=(key_id, application_key),
+            timeout=30,
+        )
+    except requests.RequestException as exc:
+        raise ArchiveStorageError(
+            f"Could not authorize Backblaze B2 application key: {exc}"
+        ) from exc
+
+    if response.status_code == 401:
+        raise ArchiveStorageError(
+            "Backblaze rejected B2_KEY_ID/B2_APPLICATION_KEY"
+        )
+
+    try:
+        response.raise_for_status()
+        payload = response.json()
+    except (requests.RequestException, ValueError) as exc:
+        raise ArchiveStorageError(
+            f"Backblaze authorization failed: {exc}"
+        ) from exc
+
+    storage = ((payload.get("apiInfo") or {}).get("storageApi") or {})
+    if not storage:
+        raise ArchiveStorageError(
+            "Backblaze authorization returned no storage API configuration"
+        )
+    return storage
+
+
+def _resolve_b2_configuration(
+    config: Config,
+    *,
+    key_id: str,
+    application_key: str,
+) -> tuple[str, str, str]:
+    b2_config = config.storage.get("b2") or {}
+    bucket = (os.getenv("B2_BUCKET") or b2_config.get("bucket") or "").strip()
+    region = (os.getenv("B2_REGION") or b2_config.get("region") or "").strip()
+    endpoint_url = (
+        os.getenv("B2_ENDPOINT_URL")
+        or b2_config.get("endpoint_url")
+        or ""
+    ).strip()
+
+    if endpoint_url and not region:
+        region = _region_from_b2_endpoint(endpoint_url)
+    if region and not endpoint_url:
+        endpoint_url = f"https://s3.{region}.backblazeb2.com"
+
+    if bucket and region and endpoint_url:
+        return bucket, region, endpoint_url
+
+    if not key_id or not application_key:
+        missing = []
+        if not bucket:
+            missing.append("B2_BUCKET")
+        if not region:
+            missing.append("B2_REGION")
+        if not endpoint_url:
+            missing.append("B2_ENDPOINT_URL")
+        raise ArchiveStorageError(
+            "Missing Backblaze B2 configuration: " + ", ".join(missing)
+        )
+
+    storage = _authorize_b2_scope(key_id, application_key)
+
+    if not endpoint_url:
+        endpoint_url = str(storage.get("s3ApiUrl") or "").strip()
+    if endpoint_url and not endpoint_url.startswith("http"):
+        endpoint_url = "https://" + endpoint_url.lstrip("/")
+    endpoint_url = endpoint_url.rstrip("/")
+
+    if not region:
+        region = _region_from_b2_endpoint(endpoint_url)
+
+    allowed = storage.get("allowed") or {}
+    allowed_buckets = allowed.get("buckets") or []
+    if not bucket:
+        if len(allowed_buckets) == 1:
+            bucket = str(allowed_buckets[0].get("name") or "").strip()
+        elif len(allowed_buckets) > 1:
+            raise ArchiveStorageError(
+                "Backblaze key can access multiple buckets; set B2_BUCKET"
+            )
+        else:
+            raise ArchiveStorageError(
+                "Could not discover a unique Backblaze bucket; set B2_BUCKET"
+            )
+    elif allowed_buckets and not any(
+        str(item.get("name") or "") == bucket
+        for item in allowed_buckets
+    ):
+        raise ArchiveStorageError(
+            "Configured B2_BUCKET is not allowed by this application key"
+        )
+
+    missing = [
+        name
+        for name, value in (
+            ("B2_BUCKET", bucket),
+            ("B2_REGION", region),
+            ("B2_ENDPOINT_URL", endpoint_url),
+        )
+        if not value
+    ]
+    if missing:
+        raise ArchiveStorageError(
+            "Could not resolve Backblaze B2 configuration: "
+            + ", ".join(missing)
+        )
+
+    return bucket, region, endpoint_url
+
+
 def _storage_backend_name(config: Config, backend_name: Optional[str] = None) -> str:
     return (
         backend_name
@@ -260,15 +398,19 @@ def get_archive_storage(
     except (TypeError, ValueError) as exc:
         raise ArchiveStorageError("B2_MAX_ARCHIVE_BYTES must be an integer") from exc
 
+    key_id = (os.getenv("B2_KEY_ID") or "").strip()
+    application_key = (os.getenv("B2_APPLICATION_KEY") or "").strip()
+    bucket, region, endpoint_url = _resolve_b2_configuration(
+        config,
+        key_id=key_id,
+        application_key=application_key,
+    )
+
     return B2ArchiveStorage(
-        bucket=os.getenv("B2_BUCKET") or b2_config.get("bucket") or "",
-        region=os.getenv("B2_REGION") or b2_config.get("region") or "",
-        endpoint_url=(
-            os.getenv("B2_ENDPOINT_URL")
-            or b2_config.get("endpoint_url")
-            or ""
-        ),
-        key_id=os.getenv("B2_KEY_ID") or "",
-        application_key=os.getenv("B2_APPLICATION_KEY") or "",
+        bucket=bucket,
+        region=region,
+        endpoint_url=endpoint_url,
+        key_id=key_id,
+        application_key=application_key,
         max_archive_bytes=max_archive_bytes,
     )
