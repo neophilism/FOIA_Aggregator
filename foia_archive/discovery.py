@@ -122,7 +122,15 @@ def fetch_json(
 
 
 def _fetch_paginated(
-    base_url: str, path: str, timeout: int, headers: Dict[str, str], params: Dict | None = None
+    base_url: str,
+    path: str,
+    timeout: int,
+    headers: Dict[str, str],
+    params: Dict | None = None,
+    *,
+    max_retries: int = 4,
+    retry_backoff_seconds: float = 1.0,
+    max_retry_delay_seconds: float = 60.0,
 ) -> Tuple[List[Dict], List[Dict]]:
     """Fetch all pages for a JSON:API endpoint following provided next links."""
 
@@ -140,7 +148,15 @@ def _fetch_paginated(
             break
         seen_urls.add(next_url)
 
-        payload = fetch_json(next_url, timeout, headers, params=next_params)
+        payload = fetch_json(
+            next_url,
+            timeout,
+            headers,
+            params=next_params,
+            max_retries=max_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+            max_retry_delay_seconds=max_retry_delay_seconds,
+        )
         batch = payload.get("data") or []
         results.extend(batch)
         included.extend(payload.get("included") or [])
@@ -161,12 +177,36 @@ def _fetch_paginated(
     return results, included
 
 
-def fetch_agencies(base_url: str, timeout: int, headers: Dict[str, str]) -> List[Dict]:
-    agencies, _ = _fetch_paginated(base_url, "agency", timeout, headers)
+def fetch_agencies(
+    base_url: str,
+    timeout: int,
+    headers: Dict[str, str],
+    *,
+    max_retries: int = 4,
+    retry_backoff_seconds: float = 1.0,
+    max_retry_delay_seconds: float = 60.0,
+) -> List[Dict]:
+    agencies, _ = _fetch_paginated(
+        base_url,
+        "agency",
+        timeout,
+        headers,
+        max_retries=max_retries,
+        retry_backoff_seconds=retry_backoff_seconds,
+        max_retry_delay_seconds=max_retry_delay_seconds,
+    )
     return agencies
 
 
-def fetch_agency_components(base_url: str, timeout: int, headers: Dict[str, str]) -> Tuple[List[Dict], List[Dict]]:
+def fetch_agency_components(
+    base_url: str,
+    timeout: int,
+    headers: Dict[str, str],
+    *,
+    max_retries: int = 4,
+    retry_backoff_seconds: float = 1.0,
+    max_retry_delay_seconds: float = 60.0,
+) -> Tuple[List[Dict], List[Dict]]:
     """Fetch FOIA agency components (units) from the FOIA.gov API.
 
     Returns a tuple of (components, included_agencies) where each list is a
@@ -174,7 +214,16 @@ def fetch_agency_components(base_url: str, timeout: int, headers: Dict[str, str]
     """
 
     params = {"include": "agency"}
-    return _fetch_paginated(base_url, "agency_components", timeout, headers, params=params)
+    return _fetch_paginated(
+        base_url,
+        "agency_components",
+        timeout,
+        headers,
+        params=params,
+        max_retries=max_retries,
+        retry_backoff_seconds=retry_backoff_seconds,
+        max_retry_delay_seconds=max_retry_delay_seconds,
+    )
 
 
 SOURCE_TYPE_PRIORITY = {
@@ -345,8 +394,30 @@ def refresh_metadata(config: Config) -> None:
         "User-Agent": config.crawler.get("user_agent", "FOIAArchiveBot/0.1"),
         "X-API-Key": api_key,
     }
-    agencies = fetch_agencies(base_url, timeout, headers)
-    components, included_agencies = fetch_agency_components(base_url, timeout, headers)
+    metadata_max_retries = int(config.foia_hub.get("max_retries", 4))
+    metadata_backoff = float(
+        config.foia_hub.get("retry_backoff_seconds", 1)
+    )
+    metadata_max_delay = float(
+        config.foia_hub.get("max_retry_delay_seconds", 60)
+    )
+
+    agencies = fetch_agencies(
+        base_url,
+        timeout,
+        headers,
+        max_retries=metadata_max_retries,
+        retry_backoff_seconds=metadata_backoff,
+        max_retry_delay_seconds=metadata_max_delay,
+    )
+    components, included_agencies = fetch_agency_components(
+        base_url,
+        timeout,
+        headers,
+        max_retries=metadata_max_retries,
+        retry_backoff_seconds=metadata_backoff,
+        max_retry_delay_seconds=metadata_max_delay,
+    )
     logger.info("Fetched %s agencies and %s agency components", len(agencies), len(components))
 
     refresh_seen_at = datetime.now(timezone.utc).isoformat()
