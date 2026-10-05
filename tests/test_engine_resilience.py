@@ -57,6 +57,21 @@ class EngineResilienceTests(unittest.TestCase):
             [1, 2],
         )
 
+    def test_engine_passes_configured_source_limit(self):
+        self.config.data["crawler"]["source_limit"] = 7
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch(
+                "foia_archive.engine.get_reading_rooms_to_crawl",
+                return_value=[],
+            ) as rooms,
+            patch("foia_archive.engine.backup_database_to_b2"),
+        ):
+            run_once(refresh_metadata_enabled=False)
+
+        rooms.assert_called_once_with(self.config, limit=7)
+
     def test_metadata_can_be_intentionally_skipped(self):
         with (
             patch("foia_archive.engine.load_config", return_value=self.config),
