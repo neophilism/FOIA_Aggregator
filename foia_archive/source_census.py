@@ -69,6 +69,15 @@ ADAPTER_HINT_TOKENS = (
     "__eventtarget",
 )
 
+REACHABLE_PROBE_CATEGORIES = {
+    "document_producing",
+    "reachable_navigable",
+    "reachable_no_links",
+    "adapter_candidate",
+    "reachable_non_html",
+    "probe_page_too_large",
+}
+
 
 @dataclass(frozen=True)
 class URLField:
@@ -590,9 +599,51 @@ def attach_probe_results(
     category_counts = Counter(
         result.category for result in probe_results.values()
     )
+
+    agency_sources: Dict[str, set[str]] = {}
+    agency_categories: Dict[str, set[str]] = {}
+    for source in census.get("source_instances", []):
+        agency_name = source.get("agency_name") or source.get("agency_id") or "agency"
+        url = source.get("url")
+        if not url:
+            continue
+        agency_sources.setdefault(agency_name, set()).add(url)
+        result = probe_results.get(url)
+        if result is not None:
+            agency_categories.setdefault(agency_name, set()).add(
+                result.category
+            )
+
+    agencies_with_reachable_source = sorted(
+        agency_name
+        for agency_name, categories in agency_categories.items()
+        if categories & REACHABLE_PROBE_CATEGORIES
+    )
+    agencies_without_reachable_source = sorted(
+        agency_name
+        for agency_name in agency_sources
+        if not (
+            agency_categories.get(agency_name, set())
+            & REACHABLE_PROBE_CATEGORIES
+        )
+    )
+    agency_problem_categories = {
+        agency_name: sorted(agency_categories.get(agency_name, set()))
+        for agency_name in agencies_without_reachable_source
+    }
+
     enriched["probes"] = probes
     enriched["probe_summary"] = {
         "sources_probed": len(probe_results),
         "category_counts": dict(sorted(category_counts.items())),
+        "agencies_with_sources": len(agency_sources),
+        "agencies_with_reachable_source": len(agencies_with_reachable_source),
+        "agencies_without_reachable_source": len(
+            agencies_without_reachable_source
+        ),
+        "agencies_without_reachable_source_names": (
+            agencies_without_reachable_source
+        ),
+        "agency_problem_categories": agency_problem_categories,
     }
     return enriched
