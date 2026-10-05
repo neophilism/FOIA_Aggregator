@@ -388,10 +388,42 @@ def write_markdown(census: dict, path: Path) -> None:
                 "## Live source-root probes",
                 "",
                 f"- Unique source roots probed: **{probe_summary['sources_probed']}**",
+                f"- Agencies represented by recognized sources: **{probe_summary['agencies_with_sources']}**",
+                f"- Agencies with ≥1 reachable source from this runner: **{probe_summary['agencies_with_reachable_source']}**",
+                f"- Agencies with no reachable source from this runner: **{probe_summary['agencies_without_reachable_source']}**",
             ]
         )
         for category, count in probe_summary["category_counts"].items():
             lines.append(f"- {category}: **{count}**")
+
+        unavailable_agencies = probe_summary.get(
+            "agencies_without_reachable_source_names"
+        ) or []
+        if unavailable_agencies:
+            lines.extend(
+                [
+                    "",
+                    "### Agencies with known sources but no reachable source from this runner",
+                    "",
+                ]
+            )
+            lines.extend(
+                _markdown_table(
+                    [
+                        [
+                            agency_name,
+                            ", ".join(
+                                probe_summary.get(
+                                    "agency_problem_categories",
+                                    {},
+                                ).get(agency_name, [])
+                            ),
+                        ]
+                        for agency_name in unavailable_agencies
+                    ],
+                    ["Agency", "Observed source categories"],
+                )
+            )
 
     no_source_candidates = [
         row
