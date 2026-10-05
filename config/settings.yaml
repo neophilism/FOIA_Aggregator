@@ -33,6 +33,12 @@ downloader:
   download_failure_retry_minutes: 60
   permanent_download_failure_retry_minutes: 1440
 
+database_backup:
+  enabled: true
+  interval_hours: 24
+  retain_count: 3
+  prefix: "database-backups"
+
 storage:
   # Use FOIA_STORAGE_BACKEND=b2 in production after B2 credentials are set.
   backend: "local"
