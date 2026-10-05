@@ -279,6 +279,15 @@ When running locally, open http://127.0.0.1:8000/. In GitHub Codespaces, open th
 
 The default search spans all agencies and offices. Selecting an agency or office only narrows the result set.
 
+The public web layer also includes launch-oriented behavior:
+- canonical and Open Graph metadata for public/shareable URLs
+- `robots.txt` and a record-aware `sitemap.xml`
+- a branded HTML 404 page
+- security headers for framing, MIME sniffing, referrer leakage, browser permissions, and HTTPS HSTS
+- a live "archive updated" timestamp derived from the latest discovery/download/extraction activity
+
+Set `FOIA_PUBLIC_BASE_URL` when a stable custom/public origin is known. If it is omitted, canonical URLs, robots, and sitemap derive their origin from the incoming request.
+
 The public UI is presentation-oriented rather than a database table. It includes:
 - a prominent cross-agency full-text search
 - live archive statistics derived from the SQLite database
