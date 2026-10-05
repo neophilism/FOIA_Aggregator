@@ -88,6 +88,9 @@ class DeploymentConfigTests(unittest.TestCase):
                 "FOIA_CRAWLER_DRY_RUN": "false",
                 "FOIA_MAX_DOCS_PER_SOURCE": "3",
                 "FOIA_CRAWLER_INTERVAL_HOURS": "4.5",
+                "FOIA_SOURCE_LIMIT": "80",
+                "FOIA_MAX_PAGES_PER_SOURCE": "4",
+                "FOIA_MAX_DEPTH": "1",
             },
             clear=False,
         ):
@@ -99,6 +102,9 @@ class DeploymentConfigTests(unittest.TestCase):
         self.assertFalse(config.crawler["dry_run"])
         self.assertEqual(config.crawler["max_docs_per_source"], 3)
         self.assertEqual(config.crawler["interval_hours"], 4.5)
+        self.assertEqual(config.crawler["source_limit"], 80)
+        self.assertEqual(config.crawler["max_pages_per_source"], 4)
+        self.assertEqual(config.crawler["max_depth"], 1)
 
     def test_blank_environment_values_do_not_replace_yaml_defaults(self):
         with patch.dict(
