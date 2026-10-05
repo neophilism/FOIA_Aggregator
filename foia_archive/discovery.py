@@ -80,7 +80,10 @@ def fetch_json(
     max_retry_delay_seconds: float = 60.0,
 ) -> Dict:
     """Fetch JSON with bounded retries for temporary FOIA.gov failures."""
+    last_error: Exception | None = None
+
     for attempt in range(max_retries + 1):
+        resp = None
         try:
             resp = requests.get(
                 url,
@@ -88,36 +91,73 @@ def fetch_json(
                 headers=headers,
                 params=params,
             )
-        except (requests.Timeout, requests.ConnectionError):
+        except requests.RequestException as exc:
+            last_error = exc
             if attempt >= max_retries:
                 raise
-            delay = max(0.0, float(retry_backoff_seconds)) * (2 ** attempt)
+            delay = min(
+                max_retry_delay_seconds,
+                max(0.0, float(retry_backoff_seconds)) * (2 ** attempt),
+            )
+            logger.warning(
+                "FOIA.gov metadata transport error %s; retrying in %.1fs (%s/%s)",
+                type(exc).__name__,
+                delay,
+                attempt + 1,
+                max_retries,
+            )
             if delay:
                 time.sleep(delay)
             continue
 
-        if resp.status_code in RETRYABLE_METADATA_STATUS_CODES:
-            if attempt < max_retries:
-                delay = _metadata_retry_delay(
-                    resp,
-                    attempt,
-                    retry_backoff_seconds,
+        try:
+            if resp.status_code in RETRYABLE_METADATA_STATUS_CODES:
+                if attempt < max_retries:
+                    delay = _metadata_retry_delay(
+                        resp,
+                        attempt,
+                        retry_backoff_seconds,
+                        max_retry_delay_seconds,
+                    )
+                    logger.warning(
+                        "FOIA.gov metadata request returned HTTP %s; retrying in %.1fs (%s/%s)",
+                        resp.status_code,
+                        delay,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    if delay:
+                        time.sleep(delay)
+                    continue
+
+            resp.raise_for_status()
+            try:
+                return resp.json()
+            except ValueError as exc:
+                last_error = exc
+                if attempt >= max_retries:
+                    raise
+                delay = min(
                     max_retry_delay_seconds,
+                    max(0.0, float(retry_backoff_seconds)) * (2 ** attempt),
                 )
                 logger.warning(
-                    "FOIA.gov metadata request returned HTTP %s; retrying in %.1fs (%s/%s)",
-                    resp.status_code,
+                    "FOIA.gov metadata returned invalid JSON; retrying in %.1fs (%s/%s)",
                     delay,
                     attempt + 1,
                     max_retries,
                 )
                 if delay:
                     time.sleep(delay)
-                continue
+        finally:
+            close = getattr(resp, "close", None)
+            if callable(close):
+                close()
 
-        resp.raise_for_status()
-        return resp.json()
-
+    if last_error is not None:
+        raise RuntimeError(
+            f"FOIA.gov metadata request retries exhausted for {url}: {last_error}"
+        ) from last_error
     raise RuntimeError(f"FOIA.gov metadata request retries exhausted for {url}")
 
 
