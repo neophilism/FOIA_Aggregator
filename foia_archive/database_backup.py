@@ -164,6 +164,69 @@ def _upload_backup(
         ) from exc
 
 
+def _list_exact_object_versions(
+    backend: B2ArchiveStorage,
+    key: str,
+) -> list[dict]:
+    """Return every stored version/delete marker for one exact B2 object key."""
+    items: list[dict] = []
+    key_marker = None
+    version_id_marker = None
+
+    while True:
+        kwargs = {
+            "Bucket": backend.bucket,
+            "Prefix": key,
+        }
+        if key_marker:
+            kwargs["KeyMarker"] = key_marker
+        if version_id_marker:
+            kwargs["VersionIdMarker"] = version_id_marker
+
+        response = backend.client.list_object_versions(**kwargs)
+        for collection_name in ("Versions", "DeleteMarkers"):
+            for item in response.get(collection_name) or []:
+                if item.get("Key") != key:
+                    continue
+                version_id = item.get("VersionId")
+                if version_id:
+                    items.append(
+                        {
+                            "Key": key,
+                            "VersionId": str(version_id),
+                            "IsDeleteMarker": collection_name == "DeleteMarkers",
+                        }
+                    )
+
+        if not response.get("IsTruncated"):
+            break
+        key_marker = response.get("NextKeyMarker")
+        version_id_marker = response.get("NextVersionIdMarker")
+        if not key_marker and not version_id_marker:
+            break
+
+    return items
+
+
+def _permanently_delete_object(
+    backend: B2ArchiveStorage,
+    key: str,
+) -> None:
+    """Permanently remove all versions of one B2 object key.
+
+    Backblaze B2 buckets are versioned by default. A normal S3 delete without a
+    VersionId creates only a delete marker and leaves older bytes billable.
+    Backup retention therefore deletes every concrete version explicitly.
+    """
+    versions = _list_exact_object_versions(backend, key)
+    for item in versions:
+        backend.client.delete_object(
+            Bucket=backend.bucket,
+            Key=key,
+            VersionId=item["VersionId"],
+        )
+
+
 def _prune_old_backups(
     backend: B2ArchiveStorage,
     prefix: str,
@@ -180,7 +243,7 @@ def _prune_old_backups(
         key = item.get("Key")
         if not key:
             continue
-        backend.client.delete_object(Bucket=backend.bucket, Key=key)
+        _permanently_delete_object(backend, str(key))
 
 
 def backup_database_to_b2(
