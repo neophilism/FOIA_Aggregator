@@ -1,3 +1,4 @@
+import sqlite3
 import unittest
 from datetime import datetime, timedelta, timezone
 from unittest.mock import Mock, patch
@@ -94,6 +95,31 @@ class EngineResilienceTests(unittest.TestCase):
         self.assertEqual(crawl.call_count, 3)
         record_failure.assert_called_once()
         self.assertEqual(record_failure.call_args.args[1], 1)
+
+
+    def test_database_failure_aborts_cycle_for_daemon_backoff(self):
+        rooms = [{"id": 1}, {"id": 2}]
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch("foia_archive.engine.refresh_metadata"),
+            patch(
+                "foia_archive.engine.get_reading_rooms_to_crawl",
+                return_value=rooms,
+            ),
+            patch(
+                "foia_archive.engine.crawl_reading_room",
+                side_effect=sqlite3.OperationalError("database is locked"),
+            ) as crawl,
+            patch(
+                "foia_archive.engine._record_unexpected_source_failure"
+            ) as record_failure,
+        ):
+            with self.assertRaises(sqlite3.OperationalError):
+                run_once()
+
+        self.assertEqual(crawl.call_count, 1)
+        record_failure.assert_not_called()
 
 
 class SchedulerResilienceTests(unittest.TestCase):
