@@ -598,11 +598,29 @@ def main() -> int:
         "X-API-Key": api_key,
     }
 
-    agencies = fetch_agencies(base_url, timeout, headers)
+    metadata_max_retries = int(config.foia_hub.get("max_retries", 5))
+    metadata_backoff = float(
+        config.foia_hub.get("retry_backoff_seconds", 1)
+    )
+    metadata_max_delay = float(
+        config.foia_hub.get("max_retry_delay_seconds", 60)
+    )
+
+    agencies = fetch_agencies(
+        base_url,
+        timeout,
+        headers,
+        max_retries=metadata_max_retries,
+        retry_backoff_seconds=metadata_backoff,
+        max_retry_delay_seconds=metadata_max_delay,
+    )
     components, included_agencies = fetch_agency_components(
         base_url,
         timeout,
         headers,
+        max_retries=metadata_max_retries,
+        retry_backoff_seconds=metadata_backoff,
+        max_retry_delay_seconds=metadata_max_delay,
     )
     census = build_component_census(
         agencies,
