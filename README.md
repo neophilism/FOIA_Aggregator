@@ -310,6 +310,10 @@ The web service exposes `/healthz` for deployment health checks. The default dem
 
 See `docs/PRESENTATION_DEPLOYMENT.md` for deployment requirements, initial corpus guidance, backup checks, and the presentation acceptance checklist.
 
+A fresh deployment can automatically restore the newest verified SQLite snapshot from B2 before the web process starts, so a previously seeded corpus appears immediately rather than beginning from an empty local database. Bucket-scoped B2 keys can also auto-discover their single allowed bucket when `B2_BUCKET` is not supplied.
+
+For a short presentation sequence based on the real seeded corpus, see `docs/DEMO_SCRIPT.md`.
+
 ## Future scope: international access-to-information systems
 
 The MVP is focused on U.S. federal FOIA sources. A future platform expansion should add comparable public-records and access-to-information systems outside the United States, especially jurisdictions where released records or prior request/response logs are publicly searchable.
