@@ -173,6 +173,7 @@ class DatabaseBackupTests(unittest.TestCase):
             "metadata": {},
             "content_type": "application/gzip",
             "last_modified": latest,
+            "version_id": "existing-version",
         }
 
         with self._patch_backend():
