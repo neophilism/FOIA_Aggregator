@@ -20,14 +20,17 @@ class FakeBackupS3Client:
     def __init__(self):
         self.objects = {}
         self.deleted = []
+        self.version_counter = 0
         self.now = datetime(2026, 10, 5, 16, 0, tzinfo=timezone.utc)
 
     def upload_file(self, Filename, Bucket, Key, ExtraArgs=None):
+        self.version_counter += 1
         self.objects[(Bucket, Key)] = {
             "body": Path(Filename).read_bytes(),
             "metadata": dict((ExtraArgs or {}).get("Metadata") or {}),
             "content_type": (ExtraArgs or {}).get("ContentType"),
             "last_modified": self.now,
+            "version_id": f"v{self.version_counter}",
         }
 
     def head_object(self, Bucket, Key):
@@ -50,9 +53,34 @@ class FakeBackupS3Client:
                 )
         return {"Contents": contents, "IsTruncated": False}
 
-    def delete_object(self, Bucket, Key):
-        self.deleted.append((Bucket, Key))
-        self.objects.pop((Bucket, Key), None)
+    def list_object_versions(
+        self,
+        Bucket,
+        Prefix,
+        KeyMarker=None,
+        VersionIdMarker=None,
+    ):
+        versions = []
+        for (bucket, key), item in self.objects.items():
+            if bucket == Bucket and key.startswith(Prefix):
+                versions.append(
+                    {
+                        "Key": key,
+                        "VersionId": item["version_id"],
+                        "LastModified": item["last_modified"],
+                    }
+                )
+        return {
+            "Versions": versions,
+            "DeleteMarkers": [],
+            "IsTruncated": False,
+        }
+
+    def delete_object(self, Bucket, Key, VersionId=None):
+        self.deleted.append((Bucket, Key, VersionId))
+        item = self.objects.get((Bucket, Key))
+        if item is not None and item.get("version_id") == VersionId:
+            self.objects.pop((Bucket, Key), None)
         return {}
 
     def download_file(self, Bucket, Key, Filename):
@@ -145,6 +173,7 @@ class DatabaseBackupTests(unittest.TestCase):
             "metadata": {},
             "content_type": "application/gzip",
             "last_modified": latest,
+            "version_id": "existing-version",
         }
 
         with self._patch_backend():
@@ -171,6 +200,7 @@ class DatabaseBackupTests(unittest.TestCase):
                 "metadata": {},
                 "content_type": "application/gzip",
                 "last_modified": base + timedelta(days=index),
+                "version_id": f"old-version-{index}",
             }
 
         now = datetime(2026, 10, 5, 16, 0, tzinfo=timezone.utc)
@@ -186,6 +216,37 @@ class DatabaseBackupTests(unittest.TestCase):
         self.assertEqual(len(remaining), 3)
         self.assertNotIn("database-backups/old-0.sqlite.gz", remaining)
         self.assertEqual(len(self.client.deleted), 1)
+        deleted_bucket, deleted_key, deleted_version = self.client.deleted[0]
+        self.assertEqual(deleted_bucket, "foia-test")
+        self.assertEqual(deleted_key, "database-backups/old-0.sqlite.gz")
+        self.assertEqual(deleted_version, "old-version-0")
+        self.assertIsNotNone(deleted_version)
+
+    def test_retention_uses_version_ids_so_old_bytes_are_permanently_removed(self):
+        old_key = "database-backups/old.sqlite.gz"
+        self.client.objects[("foia-test", old_key)] = {
+            "body": b"old",
+            "metadata": {},
+            "content_type": "application/gzip",
+            "last_modified": datetime(2026, 10, 1, tzinfo=timezone.utc),
+            "version_id": "old-version",
+        }
+
+        now = datetime(2026, 10, 5, 16, 0, tzinfo=timezone.utc)
+        self.client.now = now
+        self.config.data["database_backup"]["retain_count"] = 1
+
+        with self._patch_backend():
+            backup_database_to_b2(self.config, force=True, now=now)
+
+        self.assertNotIn(("foia-test", old_key), self.client.objects)
+        self.assertIn(
+            ("foia-test", old_key, "old-version"),
+            self.client.deleted,
+        )
+        self.assertTrue(
+            all(version_id is not None for _, _, version_id in self.client.deleted)
+        )
 
     def test_restore_defaults_to_newest_backup_and_preserves_live_database(self):
         first_time = datetime(2026, 10, 4, 16, 0, tzinfo=timezone.utc)
