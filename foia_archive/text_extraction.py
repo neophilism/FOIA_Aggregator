@@ -11,7 +11,7 @@ import pytesseract
 from docx import Document
 from PIL import Image
 from pypdf import PdfReader
-from pytesseract.pytesseract import TesseractNotFoundError
+from pytesseract.pytesseract import TesseractError, TesseractNotFoundError
 
 
 TEXT_LIKE_TYPES = {
@@ -156,8 +156,9 @@ def _bounded_image(image: Image.Image, max_megapixels: float) -> Image.Image:
 
 
 def _ocr_image(image: Image.Image, settings: OCRSettings) -> str:
+    grayscale = image.convert("L")
     prepared = _bounded_image(
-        image.convert("L"),
+        grayscale,
         settings.max_image_megapixels,
     )
     try:
@@ -174,10 +175,14 @@ def _ocr_image(image: Image.Image, settings: OCRSettings) -> str:
         raise OCRPageFailure(
             f"Tesseract OCR timed out or failed: {exc}"
         ) from exc
-    except pytesseract.TesseractError as exc:
+    except TesseractError as exc:
         raise OCRPageFailure(
             f"Tesseract OCR failed: {exc}"
         ) from exc
+    finally:
+        if prepared is not grayscale:
+            prepared.close()
+        grayscale.close()
 
 
 def _render_pdf_page(
