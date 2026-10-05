@@ -1,372 +1,206 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>FOIA Archive</title>
-    <style>
-        :root {
-            color-scheme: light;
-            --border: #d8dde5;
-            --muted: #5f6b7a;
-            --surface: #f7f8fa;
-            --accent: #1f5f99;
-            --accent-dark: #174a77;
-            --success-bg: #e8f5eb;
-            --success-text: #236b34;
-            --pending-bg: #fff4d8;
-            --pending-text: #795900;
-            --error-bg: #fbe9e9;
-            --error-text: #8a2828;
-        }
-        * { box-sizing: border-box; }
-        body {
-            font-family: Arial, sans-serif;
-            margin: 0;
-            color: #17202a;
-            background: #fff;
-        }
-        main {
-            max-width: 1500px;
-            margin: 0 auto;
-            padding: 28px 24px 48px;
-        }
-        h1 { margin: 0 0 6px; }
-        .subtitle {
-            color: var(--muted);
-            margin: 0 0 24px;
-        }
-        form {
-            background: var(--surface);
-            border: 1px solid var(--border);
-            border-radius: 8px;
-            padding: 16px;
-            margin-bottom: 20px;
-        }
-        .search-row {
-            display: flex;
-            gap: 8px;
-            align-items: end;
-            margin-bottom: 14px;
-        }
-        .search-field { flex: 1; }
-        .filters {
-            display: grid;
-            grid-template-columns: repeat(7, minmax(120px, 1fr));
-            gap: 10px;
-            align-items: end;
-        }
-        label {
-            display: block;
-            font-size: 0.85rem;
-            font-weight: bold;
-            margin-bottom: 5px;
-        }
-        input, select, button, .button-link {
-            font: inherit;
-        }
-        input, select {
-            width: 100%;
-            min-height: 38px;
-            border: 1px solid #adb6c2;
-            border-radius: 5px;
-            padding: 7px 9px;
-            background: #fff;
-        }
-        button, .button-link {
-            display: inline-block;
-            border: 1px solid var(--accent);
-            border-radius: 5px;
-            padding: 8px 14px;
-            min-height: 38px;
-            background: var(--accent);
-            color: #fff;
-            text-decoration: none;
-            cursor: pointer;
-        }
-        button:hover, .button-link:hover {
-            background: var(--accent-dark);
-        }
-        .button-link.secondary {
-            color: #26323f;
-            background: #fff;
-            border-color: #adb6c2;
-        }
-        .hint {
-            color: var(--muted);
-            font-size: 0.88rem;
-            margin: 12px 0 0;
-        }
-        .results-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: baseline;
-            gap: 16px;
-            margin: 16px 0 10px;
-        }
-        .results-count {
-            font-weight: bold;
-        }
-        .page-indicator {
-            color: var(--muted);
-            font-size: 0.9rem;
-        }
-        .table-wrap {
-            overflow-x: auto;
-            border: 1px solid var(--border);
-            border-radius: 7px;
-        }
-        table {
-            width: 100%;
-            min-width: 1050px;
-            border-collapse: collapse;
-        }
-        th, td {
-            border-bottom: 1px solid var(--border);
-            padding: 10px;
-            vertical-align: top;
-            text-align: left;
-        }
-        th {
-            background: var(--surface);
-            white-space: nowrap;
-        }
-        tbody tr:last-child td { border-bottom: 0; }
-        tbody tr:hover { background: #fbfcfd; }
-        .doc-title {
-            min-width: 250px;
-            max-width: 520px;
-            overflow-wrap: anywhere;
-        }
-        .muted { color: var(--muted); }
-        .status {
-            display: inline-block;
-            border-radius: 999px;
-            padding: 3px 8px;
-            font-size: 0.78rem;
-            font-weight: bold;
-            white-space: nowrap;
-        }
-        .status.downloaded {
-            background: var(--success-bg);
-            color: var(--success-text);
-        }
-        .status.pending {
-            background: var(--pending-bg);
-            color: var(--pending-text);
-        }
-        .status.error {
-            background: var(--error-bg);
-            color: var(--error-text);
-        }
-        .links {
-            display: flex;
-            gap: 8px;
-            flex-wrap: wrap;
-            white-space: nowrap;
-        }
-        .links a { color: var(--accent-dark); }
-        .empty {
-            border: 1px solid var(--border);
-            border-radius: 7px;
-            padding: 30px;
-            text-align: center;
-            color: var(--muted);
-            background: var(--surface);
-        }
-        .pagination {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            gap: 14px;
-            margin-top: 16px;
-        }
-        .pagination .disabled {
-            color: #98a1ac;
-            border-color: var(--border);
-            background: var(--surface);
-            cursor: default;
-            pointer-events: none;
-        }
-        @media (max-width: 1050px) {
-            .filters { grid-template-columns: repeat(3, minmax(140px, 1fr)); }
-        }
-        @media (max-width: 650px) {
-            main { padding: 20px 12px 36px; }
-            .search-row { flex-direction: column; align-items: stretch; }
-            .filters { grid-template-columns: 1fr 1fr; }
-            .results-header { align-items: flex-start; flex-direction: column; gap: 4px; }
-        }
-    </style>
-</head>
-<body>
-<main>
-    <h1>FOIA Archive</h1>
-    <p class="subtitle">Search archived federal FOIA records across all agencies by default. Agency and office filters are optional.</p>
+{% extends "base.html" %}
 
-    <form method="get" action="/">
-        <div class="search-row">
-            <div class="search-field">
-                <label for="q">Full-text search</label>
-                <input
-                    type="search"
-                    id="q"
-                    name="q"
-                    value="{{ title_query }}"
-                    maxlength="200"
-                    placeholder="Search titles, filenames, and extracted document text across all agencies"
-                >
-            </div>
-            <button type="submit">Search</button>
-            <a class="button-link secondary" href="/">Clear</a>
-        </div>
+{% block title %}Search released federal records — FOIA Aggregator{% endblock %}
 
-        <div class="filters">
-            <div>
-                <label for="agency_id">Agency</label>
-                <select name="agency_id" id="agency_id">
-                    <option value="">All agencies</option>
-                    {% for agency in agencies %}
-                        <option value="{{ agency.id }}" {% if selected_agency == agency.id %}selected{% endif %}>{{ agency.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label for="office_id">Office</label>
-                <select name="office_id" id="office_id">
-                    <option value="">All offices</option>
-                    {% for office in offices %}
-                        <option value="{{ office.id }}" {% if selected_office == office.id %}selected{% endif %}>{{ office.name }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label for="file_type">File type</label>
-                <select name="file_type" id="file_type">
-                    <option value="">All types</option>
-                    {% for ft in file_types %}
-                        <option value="{{ ft }}" {% if selected_file_type == ft %}selected{% endif %}>{{ ft|upper }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-            <div>
-                <label for="start_date">Published from</label>
-                <input type="date" id="start_date" name="start_date" value="{{ start_date or '' }}">
-            </div>
-            <div>
-                <label for="end_date">Published through</label>
-                <input type="date" id="end_date" name="end_date" value="{{ end_date or '' }}">
-            </div>
-            <div>
-                <label for="sort">Sort</label>
-                <select name="sort" id="sort">
-                    <option value="discovered_desc" {% if sort == 'discovered_desc' %}selected{% endif %}>Newest discovered</option>
-                    <option value="discovered_asc" {% if sort == 'discovered_asc' %}selected{% endif %}>Oldest discovered</option>
-                    <option value="published_desc" {% if sort == 'published_desc' %}selected{% endif %}>Newest published</option>
-                    <option value="published_asc" {% if sort == 'published_asc' %}selected{% endif %}>Oldest published</option>
-                    <option value="title_asc" {% if sort == 'title_asc' %}selected{% endif %}>Title A–Z</option>
-                    <option value="title_desc" {% if sort == 'title_desc' %}selected{% endif %}>Title Z–A</option>
-                </select>
-            </div>
-            <div>
-                <label for="page_size">Results per page</label>
-                <select name="page_size" id="page_size">
-                    {% for size in [25, 50, 100] %}
-                        <option value="{{ size }}" {% if page_size == size %}selected{% endif %}>{{ size }}</option>
-                    {% endfor %}
-                </select>
-            </div>
-        </div>
+{% block content %}
+<section class="hero">
+  <p class="eyebrow">Federal public-records search</p>
+  <h1>Search released FOIA records across agencies.</h1>
+  <p class="hero-copy">
+    One search across agency reading rooms, archived files, extracted document text, and OCR from scanned records.
+  </p>
 
-        <p class="hint">Published-date filters match only records with a known published date. Undated records remain visible when no date filter is set.</p>
-    </form>
-
-    <div class="results-header">
-        <div class="results-count">
-            {% if total_results %}
-                Showing {{ first_result }}–{{ last_result }} of {{ total_results }} result{% if total_results != 1 %}s{% endif %}
-            {% else %}
-                0 results
-            {% endif %}
-        </div>
-        <div class="page-indicator">
-            Page {{ pagination.page }} of {{ pagination.total_pages }}
-        </div>
+  <form class="search-shell" method="get" action="/">
+    <div class="search-bar">
+      <input
+        type="search"
+        id="q"
+        name="q"
+        value="{{ title_query }}"
+        maxlength="200"
+        aria-label="Search released federal records"
+        placeholder="Search names, phrases, subjects, or text inside released records"
+        autofocus
+      >
+      <button type="submit">Search records</button>
     </div>
 
-    {% if documents %}
-        <div class="table-wrap">
-            <table>
-                <thead>
-                <tr>
-                    <th>Title</th>
-                    <th>Agency</th>
-                    <th>Office</th>
-                    <th>Type</th>
-                    <th>Published</th>
-                    <th>Discovered</th>
-                    <th>Status</th>
-                    <th>Links</th>
-                </tr>
-                </thead>
-                <tbody>
-                {% for doc in documents %}
-                    <tr>
-                        <td class="doc-title">{{ doc.title or doc.filename or 'Document' }}</td>
-                        <td>{{ doc.agency_name or '—' }}</td>
-                        <td>{{ doc.office_name or '—' }}</td>
-                        <td>{{ (doc.file_type or 'unknown')|upper }}</td>
-                        <td>{{ doc.published_date or 'Unknown' }}</td>
-                        <td>{{ doc.discovered_at or '—' }}</td>
-                        <td>
-                            {% set status = doc.download_status or 'pending' %}
-                            {% if status == 'downloaded' %}
-                                <span class="status downloaded">Downloaded</span>
-                            {% elif status == 'pending' %}
-                                <span class="status pending">Pending</span>
-                            {% else %}
-                                <span
-                                    class="status error"
-                                    {% if doc.download_error %}title="{{ doc.download_error }}"{% endif %}
-                                >{{ status.replace('_', ' ')|title }}</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            <div class="links">
-                                {% if doc.storage_key or doc.local_path %}
-                                    <a href="/archive/{{ doc.id }}" target="_blank" rel="noopener">Download</a>
-                                {% endif %}
-                                {% if doc.url %}
-                                    <a href="{{ doc.url }}" target="_blank" rel="noopener noreferrer">Source</a>
-                                {% endif %}
-                            </div>
-                        </td>
-                    </tr>
-                {% endfor %}
-                </tbody>
-            </table>
+    <div class="stats" aria-label="Archive statistics">
+      <div class="stat">
+        <span class="stat-value">{{ "{:,}".format(stats.records) }}</span>
+        <span class="stat-label">records discovered</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">{{ "{:,}".format(stats.searchable_records) }}</span>
+        <span class="stat-label">full-text searchable</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">{{ "{:,}".format(stats.agencies) }}</span>
+        <span class="stat-label">agencies represented</span>
+      </div>
+      <div class="stat">
+        <span class="stat-value">{{ "{:,}".format(stats.active_sources) }}</span>
+        <span class="stat-label">active official sources</span>
+      </div>
+    </div>
+
+    <details class="filters" {% if filters_active %}open{% endif %}>
+      <summary>Advanced filters</summary>
+      <div class="filter-grid">
+        <div class="filter-field">
+          <label for="agency_id">Agency</label>
+          <select name="agency_id" id="agency_id">
+            <option value="">All agencies</option>
+            {% for agency in agencies %}
+              <option value="{{ agency.id }}" {% if selected_agency == agency.id %}selected{% endif %}>{{ agency.name }}</option>
+            {% endfor %}
+          </select>
         </div>
+
+        <div class="filter-field">
+          <label for="office_id">Office</label>
+          <select name="office_id" id="office_id">
+            <option value="">All offices</option>
+            {% for office in offices %}
+              <option value="{{ office.id }}" {% if selected_office == office.id %}selected{% endif %}>{{ office.name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="filter-field">
+          <label for="file_type">File type</label>
+          <select name="file_type" id="file_type">
+            <option value="">All types</option>
+            {% for ft in file_types %}
+              <option value="{{ ft }}" {% if selected_file_type == ft %}selected{% endif %}>{{ ft|upper }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="filter-field">
+          <label for="sort">Sort</label>
+          <select name="sort" id="sort">
+            <option value="discovered_desc" {% if sort == 'discovered_desc' %}selected{% endif %}>Newest discovered</option>
+            <option value="discovered_asc" {% if sort == 'discovered_asc' %}selected{% endif %}>Oldest discovered</option>
+            <option value="published_desc" {% if sort == 'published_desc' %}selected{% endif %}>Newest published</option>
+            <option value="published_asc" {% if sort == 'published_asc' %}selected{% endif %}>Oldest published</option>
+            <option value="title_asc" {% if sort == 'title_asc' %}selected{% endif %}>Title A–Z</option>
+            <option value="title_desc" {% if sort == 'title_desc' %}selected{% endif %}>Title Z–A</option>
+          </select>
+        </div>
+
+        <div class="filter-field">
+          <label for="start_date">Published from</label>
+          <input type="date" id="start_date" name="start_date" value="{{ start_date or '' }}">
+        </div>
+
+        <div class="filter-field">
+          <label for="end_date">Published through</label>
+          <input type="date" id="end_date" name="end_date" value="{{ end_date or '' }}">
+        </div>
+
+        <div class="filter-field">
+          <label for="page_size">Results per page</label>
+          <select name="page_size" id="page_size">
+            {% for size in [25, 50, 100] %}
+              <option value="{{ size }}" {% if page_size == size %}selected{% endif %}>{{ size }}</option>
+            {% endfor %}
+          </select>
+        </div>
+
+        <div class="filter-actions">
+          <button type="submit">Apply</button>
+          <a class="button secondary" href="/">Clear</a>
+        </div>
+
+        <p class="filter-note">
+          Published-date filters exclude records whose publication date is unknown. Search itself spans titles, filenames, native document text, and OCR text.
+        </p>
+      </div>
+    </details>
+  </form>
+</section>
+
+<section aria-labelledby="results-title">
+  <div class="results-heading">
+    <div>
+      <h2 id="results-title">
+        {% if title_query %}Search results{% else %}Recently discovered records{% endif %}
+      </h2>
+      <div class="results-meta">
+        {% if total_results %}
+          Showing {{ first_result }}–{{ last_result }} of {{ total_results }} result{% if total_results != 1 %}s{% endif %}
+        {% else %}
+          0 results
+        {% endif %}
+      </div>
+    </div>
+    <div class="results-meta">Page {{ pagination.page }} of {{ pagination.total_pages }}</div>
+  </div>
+
+  {% if documents %}
+    <div class="result-list">
+      {% for doc in documents %}
+        <article class="result-card">
+          <div class="result-kicker">
+            <span>{{ doc.agency_name or 'Federal record' }}</span>
+            {% if doc.office_name %}<span>• {{ doc.office_name }}</span>{% endif %}
+            <span>• {{ (doc.file_type or 'unknown')|upper }}</span>
+            {% if doc.published_date %}<span>• Published {{ doc.published_date }}</span>{% endif %}
+          </div>
+
+          <a class="result-title" href="/record/{{ doc.id }}">{{ doc.title or doc.filename or 'Untitled record' }}</a>
+
+          {% if doc.snippet %}
+            <p class="snippet">{{ doc.snippet }}</p>
+          {% elif doc.filename and doc.filename != doc.title %}
+            <p class="snippet">{{ doc.filename }}</p>
+          {% endif %}
+
+          <div class="result-footer">
+            <div class="result-actions">
+              <a href="/record/{{ doc.id }}">View record</a>
+              {% if doc.storage_key or doc.local_path %}
+                <a href="/archive/{{ doc.id }}" target="_blank" rel="noopener">Archived copy</a>
+              {% endif %}
+              {% if doc.url %}
+                <a href="{{ doc.url }}" target="_blank" rel="noopener noreferrer">Original source</a>
+              {% endif %}
+            </div>
+
+            {% set status = doc.download_status or 'pending' %}
+            {% if status == 'downloaded' %}
+              <span class="badge downloaded">Archived</span>
+            {% elif status == 'pending' %}
+              <span class="badge pending">Pending</span>
+            {% else %}
+              <span class="badge error" {% if doc.download_error %}title="{{ doc.download_error }}"{% endif %}>{{ status.replace('_', ' ')|title }}</span>
+            {% endif %}
+          </div>
+        </article>
+      {% endfor %}
+    </div>
+  {% else %}
+    <div class="empty-state">
+      <h3>No documents match the current search and filters.</h3>
+      <div>Try a broader phrase, remove a filter, or search by a person, organization, program, or distinctive phrase.</div>
+    </div>
+  {% endif %}
+
+  <nav class="pagination" aria-label="Search results pages">
+    {% if pagination.previous_url %}
+      <a class="button secondary" href="{{ pagination.previous_url }}">← Previous</a>
     {% else %}
-        <div class="empty">
-            No documents match the current search and filters.
-        </div>
+      <span class="button secondary disabled" aria-disabled="true">← Previous</span>
     {% endif %}
 
-    <nav class="pagination" aria-label="Search results pages">
-        {% if pagination.previous_url %}
-            <a class="button-link secondary" href="{{ pagination.previous_url }}">← Previous</a>
-        {% else %}
-            <span class="button-link secondary disabled" aria-disabled="true">← Previous</span>
-        {% endif %}
+    <span class="page-label">Page {{ pagination.page }} of {{ pagination.total_pages }}</span>
 
-        <span class="page-indicator">Page {{ pagination.page }} of {{ pagination.total_pages }}</span>
-
-        {% if pagination.next_url %}
-            <a class="button-link secondary" href="{{ pagination.next_url }}">Next →</a>
-        {% else %}
-            <span class="button-link secondary disabled" aria-disabled="true">Next →</span>
-        {% endif %}
-    </nav>
-</main>
-</body>
-</html>
+    {% if pagination.next_url %}
+      <a class="button secondary" href="{{ pagination.next_url }}">Next →</a>
+    {% else %}
+      <span class="button secondary disabled" aria-disabled="true">Next →</span>
+    {% endif %}
+  </nav>
+</section>
+{% endblock %}
