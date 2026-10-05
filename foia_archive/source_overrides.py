@@ -160,7 +160,7 @@ SOURCE_URL_REPLACEMENTS: Dict[str, str] = {
     "http://www.prc.gov/foia": "https://www.prc.gov/foia",
     "https://www.ibwc.gov/Organization/FOIA_RR.html": "https://www.ibwc.gov/foia/",
     "https://osc.gov/Pages/FOIA-Resources.aspx": "https://www.osc.gov/about/foia/",
-    "https://www.restorethegulf.gov/resources/council-documents-foia-library": "https://www.restorethegulf.gov/resources/reports-plans",
+    "https://www.restorethegulf.gov/resources/council-documents-foia-library": "https://www.restorethegulf.gov/reports/",
     "https://www.whitehouse.gov/ipec/legal/": "https://www.whitehouse.gov/ipec",
 }
 
