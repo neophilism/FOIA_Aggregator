@@ -57,6 +57,93 @@ class DatabaseDurabilityTests(unittest.TestCase):
         self.assertEqual([row["version"] for row in rows], [1, 2, 3, 4, 5, 6])
         self.assertEqual(version, 6)
 
+    def test_version_5_full_text_rows_gain_native_extraction_method(self):
+        conn = sqlite3.connect(self.db_path)
+        conn.executescript(
+            models.AGENCIES_TABLE
+            + models.OFFICES_TABLE
+            + models.READING_ROOMS_TABLE
+            + models.DOCUMENTS_TABLE
+            + models.SCHEMA_MIGRATIONS_TABLE
+        )
+        conn.execute(
+            """
+            CREATE TABLE document_text (
+                document_id INTEGER PRIMARY KEY,
+                body TEXT,
+                extraction_status TEXT NOT NULL DEFAULT 'pending',
+                extraction_error TEXT,
+                extracted_at TEXT,
+                character_count INTEGER DEFAULT 0,
+                truncated INTEGER DEFAULT 0
+            )
+            """
+        )
+        conn.execute(models.DOCUMENT_FTS_TABLE)
+        conn.execute(
+            """
+            INSERT INTO documents (
+                id, url, title, file_type, filename, discovered_at
+            )
+            VALUES (
+                1,
+                'https://example.gov/existing.pdf',
+                'Existing',
+                'pdf',
+                'existing.pdf',
+                '2026-10-05T00:00:00'
+            )
+            """
+        )
+        conn.execute(
+            """
+            INSERT INTO document_text (
+                document_id,
+                body,
+                extraction_status,
+                extracted_at,
+                character_count,
+                truncated
+            )
+            VALUES (
+                1,
+                'already indexed text',
+                'indexed',
+                '2026-10-05T00:01:00',
+                20,
+                0
+            )
+            """
+        )
+        for version in range(1, 6):
+            conn.execute(
+                """
+                INSERT INTO schema_migrations (version, name, applied_at)
+                VALUES (?, ?, ?)
+                """,
+                (version, f"historical-{version}", "2026-10-05T00:00:00"),
+            )
+        conn.commit()
+        conn.close()
+
+        init_db(self.db_path, self.files_dir)
+
+        conn = get_connection(self.db_path)
+        try:
+            row = conn.execute(
+                """
+                SELECT extraction_method
+                FROM document_text
+                WHERE document_id = 1
+                """
+            ).fetchone()
+            version = get_schema_version(conn)
+        finally:
+            conn.close()
+
+        self.assertEqual(row["extraction_method"], "native_text")
+        self.assertEqual(version, 6)
+
     def test_expected_query_indexes_are_created(self):
         init_db(self.db_path, self.files_dir)
         conn = get_connection(self.db_path)
