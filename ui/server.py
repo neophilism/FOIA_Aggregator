@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlencode
 
-from fastapi import FastAPI, Query, Request
+from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -47,6 +47,29 @@ def fetch_file_types(conn: sqlite3.Connection) -> List[str]:
     return [r[0] for r in rows if r[0]]
 
 
+def _optional_int_filter(value: Optional[str], name: str) -> Optional[int]:
+    """Normalize an optional select value from an HTML GET form.
+
+    Browsers submit the "All ..." options as an empty string. Treat that as no
+    filter rather than letting FastAPI reject the request before the search
+    route can run.
+    """
+    if value is None or str(value).strip() == "":
+        return None
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        raise HTTPException(
+            status_code=400,
+            detail=f"{name} must be an integer when specified",
+        )
+    if parsed <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail=f"{name} must be a positive integer when specified",
+        )
+    return parsed
+
 
 def _page_url(
     page: int,
@@ -80,8 +103,8 @@ def _page_url(
 async def search_page(
     request: Request,
     q: Optional[str] = Query(None, max_length=200),
-    agency_id: Optional[int] = Query(None),
-    office_id: Optional[int] = Query(None),
+    agency_id: Optional[str] = Query(None),
+    office_id: Optional[str] = Query(None),
     file_type: Optional[str] = Query(None),
     start_date: Optional[str] = Query(None),
     end_date: Optional[str] = Query(None),
@@ -89,6 +112,9 @@ async def search_page(
     page: int = Query(1, ge=1),
     page_size: int = Query(50, ge=1, le=100),
 ):
+    agency_filter_id = _optional_int_filter(agency_id, "agency_id")
+    office_filter_id = _optional_int_filter(office_id, "office_id")
+
     if sort not in SORT_ORDERS:
         sort = "discovered_desc"
     if page_size not in {25, 50, 100}:
@@ -98,12 +124,12 @@ async def search_page(
     conn = get_db()
     try:
         agencies = fetch_agencies(conn)
-        offices = fetch_offices(conn, agency_id)
+        offices = fetch_offices(conn, agency_filter_id)
         file_types = fetch_file_types(conn)
         documents, total_results = query_documents_page(
             conn,
-            agency_id=agency_id,
-            office_id=office_id,
+            agency_id=agency_filter_id,
+            office_id=office_filter_id,
             file_type=file_type,
             start_date=start_date,
             end_date=end_date,
@@ -117,8 +143,8 @@ async def search_page(
             page = total_pages
             documents, total_results = query_documents_page(
                 conn,
-                agency_id=agency_id,
-                office_id=office_id,
+                agency_id=agency_filter_id,
+                office_id=office_filter_id,
                 file_type=file_type,
                 start_date=start_date,
                 end_date=end_date,
@@ -140,8 +166,8 @@ async def search_page(
             _page_url(
                 page - 1,
                 title_query=title_query,
-                agency_id=agency_id,
-                office_id=office_id,
+                agency_id=agency_filter_id,
+                office_id=office_filter_id,
                 file_type=file_type,
                 start_date=start_date,
                 end_date=end_date,
@@ -155,8 +181,8 @@ async def search_page(
             _page_url(
                 page + 1,
                 title_query=title_query,
-                agency_id=agency_id,
-                office_id=office_id,
+                agency_id=agency_filter_id,
+                office_id=office_filter_id,
                 file_type=file_type,
                 start_date=start_date,
                 end_date=end_date,
@@ -177,8 +203,8 @@ async def search_page(
             "file_types": file_types,
             "documents": documents,
             "title_query": title_query or "",
-            "selected_agency": agency_id,
-            "selected_office": office_id,
+            "selected_agency": agency_filter_id,
+            "selected_office": office_filter_id,
             "selected_file_type": file_type,
             "start_date": start_date,
             "end_date": end_date,

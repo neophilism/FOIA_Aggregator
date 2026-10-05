@@ -202,19 +202,19 @@
 <body>
 <main>
     <h1>FOIA Archive</h1>
-    <p class="subtitle">Browse and filter archived federal FOIA records.</p>
+    <p class="subtitle">Search archived federal FOIA records across all agencies by default. Agency and office filters are optional.</p>
 
     <form method="get" action="/">
         <div class="search-row">
             <div class="search-field">
-                <label for="q">Title search</label>
+                <label for="q">Title / filename search</label>
                 <input
                     type="search"
                     id="q"
                     name="q"
                     value="{{ title_query }}"
                     maxlength="200"
-                    placeholder="Search document titles or filenames"
+                    placeholder="Search document titles or filenames across all agencies"
                 >
             </div>
             <button type="submit">Search</button>

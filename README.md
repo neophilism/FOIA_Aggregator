@@ -108,13 +108,15 @@ Indexes cover the primary browse/filter fields and crawler status fields so arch
 
 ## Web UI
 
-Start the FastAPI server (e.g., with uvicorn):
+Start the FastAPI server:
 
 ```bash
-uvicorn ui.server:app --reload
+python -m uvicorn ui.server:app --reload --host 0.0.0.0 --port 8000
 ```
 
-Then open http://127.0.0.1:8000/ to browse the archive.
+When running locally, open http://127.0.0.1:8000/. In GitHub Codespaces, open the **Ports** panel and use **Open in Browser** for forwarded port **8000**.
+
+The default search spans all agencies and offices. Selecting an agency or office only narrows the result set.
 
 The MVP UI supports:
 - title/filename search
