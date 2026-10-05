@@ -91,6 +91,8 @@ async def search_page(
 ):
     if sort not in SORT_ORDERS:
         sort = "discovered_desc"
+    if page_size not in {25, 50, 100}:
+        page_size = 50
 
     title_query = (q or "").strip() or None
     conn = get_db()
