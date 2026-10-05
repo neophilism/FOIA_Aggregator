@@ -6,3 +6,5 @@ uvicorn
 jinja2
 beautifulsoup4
 boto3
+pypdf
+python-docx

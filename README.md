@@ -163,6 +163,52 @@ The live test validates the complete storage path:
 
 The workflow never prints the application key or signed download URL.
 
+## Full-text search
+
+The archive can index extracted document body text in SQLite FTS5 while preserving the existing title/filename substring search.
+
+Supported first-pass extractors:
+- PDF text layers via `pypdf`
+- DOCX paragraphs and tables via `python-docx`
+- text-like formats including TXT, CSV, JSON, XML, RTF, and EML
+
+Extraction runs **before** a newly downloaded file is committed to its archive backend. This matters for B2 because the verified upload path removes the temporary local staging file after upload. Extraction failures do not block archival of the original record.
+
+Each archived document receives explicit extraction state in `document_text`, including:
+- `indexed`
+- `indexed_truncated`
+- `empty` — for example, a scanned PDF with no text layer; this is a future OCR candidate
+- `unsupported`
+- `extraction_failed`
+
+The FTS index is keyed by the document ID and is refreshed atomically whenever extracted text is replaced. If an archived file is later found missing and a re-download fails, its stale extracted text is removed from search as well.
+
+Per-document indexed text is bounded by:
+
+```yaml
+search:
+  max_indexed_chars_per_document: 5000000
+```
+
+This prevents a single unusually large release from dominating SQLite memory or disk. OCR can reuse the same ceiling later.
+
+Existing archived documents can be indexed without re-crawling agency websites:
+
+```bash
+python main.py reindex-text
+```
+
+Optional controls:
+
+```bash
+python main.py reindex-text --limit 100
+python main.py reindex-text --force
+```
+
+The backfill command reads local archive files directly. For B2-backed documents it downloads only the archived object into a temporary staging directory, extracts/indexes the text, and removes the temporary copy.
+
+OCR, legacy binary Office formats, image-only documents, and audio/video transcription are intentionally separate later phases so they can be added without changing the full-text search schema.
+
 ## Continuous-operation resilience
 
 The `daemon` command is designed to stay alive across ordinary application and network failures.

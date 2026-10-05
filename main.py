@@ -6,6 +6,7 @@ from foia_archive.database_backup import (
 )
 from foia_archive.engine import run_once
 from foia_archive.scheduler import run_forever
+from foia_archive.text_index import reindex_downloaded_documents
 from foia_archive.utils import load_config, parse_bool
 
 app = typer.Typer(help="FOIA Archive CLI")
@@ -86,6 +87,38 @@ def restore_db(
         overwrite=overwrite,
     )
     typer.echo(f"Restored verified database to {restored}")
+
+
+@app.command("reindex-text")
+def reindex_text(
+    config: str = "config/settings.yaml",
+    limit: int | None = typer.Option(
+        None,
+        "--limit",
+        min=1,
+        help="Maximum number of archived documents to process.",
+    ),
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Re-extract documents that already have extraction state.",
+    ),
+):
+    """Backfill full-text search from already archived documents."""
+    cfg = load_config(config)
+    summary = reindex_downloaded_documents(
+        cfg,
+        limit=limit,
+        force=force,
+    )
+    typer.echo(
+        "Text reindex complete: "
+        f"attempted={summary.attempted}, "
+        f"indexed={summary.indexed}, "
+        f"empty={summary.empty}, "
+        f"unsupported={summary.unsupported}, "
+        f"failed={summary.failed}"
+    )
 
 
 @app.command()

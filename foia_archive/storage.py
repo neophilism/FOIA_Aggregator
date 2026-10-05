@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import re
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
@@ -156,6 +157,12 @@ def _migration_4_archive_storage(conn: sqlite3.Connection) -> None:
                 raise
 
 
+def _migration_5_full_text_search(conn: sqlite3.Connection) -> None:
+    conn.execute(models.DOCUMENT_TEXT_TABLE)
+    conn.execute(models.DOCUMENT_FTS_TABLE)
+    conn.execute(models.DOCUMENT_FTS_DELETE_TRIGGER)
+
+
 MIGRATIONS: Tuple[
     Tuple[int, str, Callable[[sqlite3.Connection], None]],
     ...,
@@ -164,6 +171,7 @@ MIGRATIONS: Tuple[
     (2, "document source relationships", _migration_2_document_sources),
     (3, "archive query indexes", _migration_3_indexes),
     (4, "archive storage backends", _migration_4_archive_storage),
+    (5, "document full text search", _migration_5_full_text_search),
 )
 
 
@@ -465,6 +473,18 @@ def _escape_like(value: str) -> str:
     )
 
 
+def _fts5_query(value: str) -> Optional[str]:
+    """Convert plain user text into a safe FTS5 AND query.
+
+    UI search is intentionally not an FTS query-language surface. Treat words
+    as literals so punctuation or quotes cannot produce MATCH syntax errors.
+    """
+    tokens = re.findall(r"\w+", value, flags=re.UNICODE)
+    if not tokens:
+        return None
+    return " AND ".join(f'"{token.replace(chr(34), chr(34) * 2)}"' for token in tokens)
+
+
 def _document_filter_sql(
     agency_id: Optional[int] = None,
     office_id: Optional[int] = None,
@@ -520,18 +540,36 @@ def _document_filter_sql(
         clauses.append("d.published_date <= ?")
         params.append(end_date)
     if title_query:
-        escaped = _escape_like(title_query.strip())
+        raw_query = title_query.strip()
+        escaped = _escape_like(raw_query)
         if escaped:
-            clauses.append(
-                """
-                (
-                    COALESCE(d.title, '') LIKE ? ESCAPE '\\'
-                    OR COALESCE(d.filename, '') LIKE ? ESCAPE '\\'
-                )
-                """
-            )
             pattern = f"%{escaped}%"
-            params.extend([pattern, pattern])
+            fts_query = _fts5_query(raw_query)
+            if fts_query:
+                clauses.append(
+                    """
+                    (
+                        COALESCE(d.title, '') LIKE ? ESCAPE '\\'
+                        OR COALESCE(d.filename, '') LIKE ? ESCAPE '\\'
+                        OR d.id IN (
+                            SELECT rowid
+                            FROM document_fts
+                            WHERE document_fts MATCH ?
+                        )
+                    )
+                    """
+                )
+                params.extend([pattern, pattern, fts_query])
+            else:
+                clauses.append(
+                    """
+                    (
+                        COALESCE(d.title, '') LIKE ? ESCAPE '\\'
+                        OR COALESCE(d.filename, '') LIKE ? ESCAPE '\\'
+                    )
+                    """
+                )
+                params.extend([pattern, pattern])
 
     return clauses, params
 
@@ -644,6 +682,70 @@ def query_documents_page(
     return rows, total
 
 
+def upsert_document_text(
+    conn: sqlite3.Connection,
+    document_id: int,
+    *,
+    body: str,
+    extraction_status: str,
+    extracted_at: str,
+    extraction_error: Optional[str] = None,
+    character_count: Optional[int] = None,
+    truncated: bool = False,
+) -> None:
+    """Persist extraction state and refresh the FTS5 row atomically."""
+    if character_count is None:
+        character_count = len(body or "")
+
+    with conn:
+        conn.execute(
+            """
+            INSERT INTO document_text (
+                document_id,
+                body,
+                extraction_status,
+                extraction_error,
+                extracted_at,
+                character_count,
+                truncated
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(document_id) DO UPDATE SET
+                body = excluded.body,
+                extraction_status = excluded.extraction_status,
+                extraction_error = excluded.extraction_error,
+                extracted_at = excluded.extracted_at,
+                character_count = excluded.character_count,
+                truncated = excluded.truncated
+            """,
+            (
+                document_id,
+                body,
+                extraction_status,
+                extraction_error,
+                extracted_at,
+                int(character_count),
+                1 if truncated else 0,
+            ),
+        )
+        conn.execute("DELETE FROM document_fts WHERE rowid = ?", (document_id,))
+        if body and extraction_status in {"indexed", "indexed_truncated"}:
+            conn.execute(
+                "INSERT INTO document_fts(rowid, body) VALUES (?, ?)",
+                (document_id, body),
+            )
+
+
+def get_document_text(
+    conn: sqlite3.Connection,
+    document_id: int,
+) -> Optional[sqlite3.Row]:
+    return conn.execute(
+        "SELECT * FROM document_text WHERE document_id = ?",
+        (document_id,),
+    ).fetchone()
+
+
 def update_download_metadata(
     conn: sqlite3.Connection,
     document_id: int,
@@ -692,24 +794,29 @@ def update_download_failure(
     error: str,
     attempted_at: str,
 ) -> None:
-    conn.execute(
-        """
-        UPDATE documents
-        SET local_path = NULL,
-            storage_backend = NULL,
-            storage_key = NULL,
-            downloaded_at = NULL,
-            mime_type = NULL,
-            file_size = NULL,
-            sha256 = NULL,
-            download_status = ?,
-            download_error = ?,
-            last_download_attempt_at = ?
-        WHERE id = ?
-        """,
-        (status, error, attempted_at, document_id),
-    )
-    conn.commit()
+    with conn:
+        conn.execute(
+            """
+            UPDATE documents
+            SET local_path = NULL,
+                storage_backend = NULL,
+                storage_key = NULL,
+                downloaded_at = NULL,
+                mime_type = NULL,
+                file_size = NULL,
+                sha256 = NULL,
+                download_status = ?,
+                download_error = ?,
+                last_download_attempt_at = ?
+            WHERE id = ?
+            """,
+            (status, error, attempted_at, document_id),
+        )
+        conn.execute("DELETE FROM document_fts WHERE rowid = ?", (document_id,))
+        conn.execute(
+            "DELETE FROM document_text WHERE document_id = ?",
+            (document_id,),
+        )
 
 
 def archived_remote_bytes(conn: sqlite3.Connection, backend: str) -> int:

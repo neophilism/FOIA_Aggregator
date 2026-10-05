@@ -100,6 +100,33 @@ CREATE TABLE IF NOT EXISTS schema_migrations (
 );
 """
 
+DOCUMENT_TEXT_TABLE = """
+CREATE TABLE IF NOT EXISTS document_text (
+    document_id INTEGER PRIMARY KEY,
+    body TEXT,
+    extraction_status TEXT NOT NULL DEFAULT 'pending',
+    extraction_error TEXT,
+    extracted_at TEXT,
+    character_count INTEGER DEFAULT 0,
+    truncated INTEGER DEFAULT 0,
+    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE
+);
+"""
+
+DOCUMENT_FTS_TABLE = """
+CREATE VIRTUAL TABLE IF NOT EXISTS document_fts
+USING fts5(body, tokenize='unicode61 remove_diacritics 2');
+"""
+
+DOCUMENT_FTS_DELETE_TRIGGER = """
+CREATE TRIGGER IF NOT EXISTS documents_delete_fts
+AFTER DELETE ON documents
+BEGIN
+    DELETE FROM document_fts WHERE rowid = OLD.id;
+END;
+"""
+
+
 DOCUMENT_SOURCES_TABLE = """
 CREATE TABLE IF NOT EXISTS document_sources (
     document_id INTEGER NOT NULL,
