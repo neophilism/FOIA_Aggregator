@@ -28,10 +28,45 @@ jobs:
           if [ -n "$REPO_FOIA_API_KEY" ]; then
             echo "::add-mask::$REPO_FOIA_API_KEY"
             echo "FOIA_API_KEY=$REPO_FOIA_API_KEY" >> "$GITHUB_ENV"
-          else
-            # api.data.gov's public, rate-limited testing credential.
-            echo "FOIA_API_KEY=DEMO_KEY" >> "$GITHUB_ENV"
+            exit 0
           fi
+
+          python - <<'PY'
+          import os
+          import re
+          import requests
+          from bs4 import BeautifulSoup
+
+          repo = requests.get(
+              "https://api.github.com/repos/usdoj/foia.gov",
+              timeout=30,
+          )
+          repo.raise_for_status()
+          default_branch = repo.json()["default_branch"]
+
+          spec = requests.get(
+              f"https://raw.githubusercontent.com/usdoj/foia.gov/{default_branch}/swagger.json",
+              timeout=30,
+          )
+          spec.raise_for_status()
+          description = spec.json()["info"]["description"]
+          text = BeautifulSoup(description, "html.parser").get_text(" ", strip=True)
+          match = re.search(
+              r"use\s+the\s+following\s+api[_ -]?key\s+for\s+testing\.?\s*([A-Za-z0-9_-]{20,})",
+              text,
+              flags=re.IGNORECASE,
+          )
+          if not match:
+              raise SystemExit(
+                  "Could not recover FOIA.gov's published testing API key "
+                  "from the first-party Swagger specification."
+              )
+
+          api_key = match.group(1)
+          print(f"::add-mask::{api_key}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"FOIA_API_KEY={api_key}\n")
+          PY
 
       - name: Run complete source census
         run: >
