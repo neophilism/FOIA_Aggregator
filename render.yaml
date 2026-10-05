@@ -1,0 +1,21 @@
+services:
+  - type: web
+    name: foia-aggregator
+    runtime: docker
+    plan: free
+    healthCheckPath: /healthz
+    envVars:
+      - key: FOIA_STORAGE_BACKEND
+        value: b2
+      - key: FOIA_BOOTSTRAP_DB_FROM_B2
+        value: "true"
+      - key: FOIA_DB_PATH
+        value: /data/foia_archive.db
+      - key: FOIA_FILES_DIR
+        value: /data/files
+      - key: B2_KEY_ID
+        sync: false
+      - key: B2_APPLICATION_KEY
+        sync: false
+      - key: B2_MAX_ARCHIVE_BYTES
+        value: "9000000000"
