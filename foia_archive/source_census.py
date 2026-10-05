@@ -411,11 +411,23 @@ def probe_source(
             adapter_hints=hints,
             error=None,
         )
-    except (UnsafeURL, FileTooLarge) as exc:
+    except UnsafeURL as exc:
         return ProbeResult(
             url=url,
             final_url=None,
             category="blocked_by_safety",
+            status_code=None,
+            mime_type=None,
+            direct_document_links=0,
+            crawlable_page_links=0,
+            adapter_hints=(),
+            error=f"{type(exc).__name__}: {exc}",
+        )
+    except FileTooLarge as exc:
+        return ProbeResult(
+            url=url,
+            final_url=None,
+            category="probe_page_too_large",
             status_code=None,
             mime_type=None,
             direct_document_links=0,
