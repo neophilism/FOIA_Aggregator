@@ -10,6 +10,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
+from .source_overrides import curated_sources_for_component
 from .storage import (
     deactivate_reading_rooms_not_seen,
     get_connection,
@@ -356,6 +357,14 @@ def refresh_metadata(config: Config) -> None:
         # crawl targets. Request forms, agency homepages, and generic links are
         # intentionally not guessed into the reading-room set.
         sources = extract_reading_room_sources(attrs)
+        if not sources:
+            sources = [
+                {
+                    "url": source["url"],
+                    "source_type": source["source_type"],
+                }
+                for source in curated_sources_for_component(component.get("id"))
+            ]
 
         for source in sources:
             upsert_reading_room(
