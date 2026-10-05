@@ -164,6 +164,7 @@ def write_component_csv(census: dict, path: Path) -> None:
                 "recognized_sources",
                 "candidate_ignored_urls",
                 "ignored_url_count",
+                "historical_note",
             ],
         )
         writer.writeheader()
@@ -184,6 +185,7 @@ def write_component_csv(census: dict, path: Path) -> None:
                         for item in row["candidate_ignored_urls"]
                     ),
                     "ignored_url_count": len(row["ignored_urls"]),
+                    "historical_note": row.get("historical_note") or "",
                 }
             )
 
@@ -277,8 +279,12 @@ def write_markdown(census: dict, path: Path) -> None:
         f"- FOIA.gov agencies returned: **{summary['agencies_returned']}**",
         f"- Agencies referenced by components: **{summary['agencies_referenced_by_components']}**",
         f"- Agencies with ≥1 recognized publication source: **{summary['agencies_with_recognized_source']}**",
-        f"- Agencies with no recognized publication source: **{summary['agencies_without_recognized_source']}**",
+        f"- Agencies with no recognized publication source (including historical): **{summary['agencies_without_recognized_source']}**",
+        f"- Current agencies: **{summary['current_agencies']}**",
+        f"- Current agencies with no recognized publication source: **{summary['current_agencies_without_recognized_source']}**",
+        f"- Historical/defunct agencies retained by FOIA.gov: **{summary['historical_agencies']}**",
         f"- Agency components: **{summary['components']}**",
+        f"- Historical/defunct components: **{summary['historical_components']}**",
         f"- Components with ≥1 recognized publication source: **{summary['components_with_recognized_source']}**",
         f"- Components with no recognized publication source: **{summary['components_without_recognized_source']}**",
         f"- No-source components with a publication-looking ignored URL: **{summary['components_without_source_but_candidate_url']}**",
@@ -299,41 +305,74 @@ def write_markdown(census: dict, path: Path) -> None:
             {
                 "agency_name": row["agency_name"],
                 "components": 0,
+                "current_components": 0,
                 "components_with_source": 0,
             },
         )
         entry["components"] += 1
+        if not row.get("historical_note"):
+            entry["current_components"] += 1
         if row["recognized_source_count"] > 0:
             entry["components_with_source"] += 1
 
-    agencies_without_source = sorted(
+    current_agencies_without_source = sorted(
         (
             entry
             for entry in agency_coverage.values()
-            if entry["components_with_source"] == 0
+            if entry["current_components"] > 0
+            and entry["components_with_source"] == 0
         ),
         key=lambda item: item["agency_name"].lower(),
     )
     lines.extend(
         [
             "",
-            "## Agencies with no recognized publication source",
+            "## Current agencies with no recognized publication source",
             "",
-            f"Total: **{len(agencies_without_source)}**",
+            f"Total: **{len(current_agencies_without_source)}**",
             "",
         ]
     )
-    if agencies_without_source:
+    if current_agencies_without_source:
         lines.extend(
             _markdown_table(
                 [
                     [
                         item["agency_name"],
-                        str(item["components"]),
+                        str(item["current_components"]),
                     ]
-                    for item in agencies_without_source
+                    for item in current_agencies_without_source
                 ],
-                ["Agency", "Components"],
+                ["Agency", "Current components"],
+            )
+        )
+    else:
+        lines.append("None.")
+
+    historical_rows = [
+        row for row in census["components"] if row.get("historical_note")
+    ]
+    lines.extend(
+        [
+            "",
+            "## Historical/defunct agency components",
+            "",
+            f"Total: **{len(historical_rows)}**",
+            "",
+        ]
+    )
+    if historical_rows:
+        lines.extend(
+            _markdown_table(
+                [
+                    [
+                        row["agency_name"],
+                        row["component_name"],
+                        row["historical_note"],
+                    ]
+                    for row in historical_rows
+                ],
+                ["Agency", "Component", "Reason"],
             )
         )
     else:
@@ -408,6 +447,7 @@ def write_markdown(census: dict, path: Path) -> None:
         [
             row["agency_name"],
             row["component_name"],
+            "historical" if row.get("historical_note") else "current gap",
             str(len(row["ignored_urls"])),
         ]
         for row in zero_source
@@ -415,7 +455,7 @@ def write_markdown(census: dict, path: Path) -> None:
     lines.extend(
         _markdown_table(
             zero_rows,
-            ["Agency", "Component", "Ignored metadata URLs"],
+            ["Agency", "Component", "Status", "Ignored metadata URLs"],
         )
     )
 
