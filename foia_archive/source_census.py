@@ -12,6 +12,10 @@ from .discovery import (
     _normalize_source_url,
     extract_reading_room_sources,
 )
+from .source_overrides import (
+    curated_sources_for_component,
+    historical_component_note,
+)
 from .scraper_core import (
     FileTooLarge,
     HostRateLimiter,
@@ -189,6 +193,15 @@ def build_component_census(
         )
 
         recognized = extract_reading_room_sources(attrs)
+        if not recognized:
+            recognized = [
+                {
+                    "url": source["url"],
+                    "source_type": source["source_type"],
+                }
+                for source in curated_sources_for_component(component_id)
+            ]
+        history_note = historical_component_note(component_id)
         recognized_urls = {source["url"] for source in recognized}
         all_url_fields = list(iter_url_fields(attrs))
 
@@ -239,6 +252,7 @@ def build_component_census(
                 "recognized_source_count": len(recognized),
                 "ignored_urls": ignored,
                 "candidate_ignored_urls": candidates,
+                "historical_note": history_note,
             }
         )
 
@@ -255,7 +269,23 @@ def build_component_census(
         for row in component_rows
         if row["agency_id"] and row["recognized_source_count"] > 0
     }
+    agency_rows: Dict[str, List[Dict[str, Any]]] = {}
+    for row in component_rows:
+        if row["agency_id"]:
+            agency_rows.setdefault(row["agency_id"], []).append(row)
+    historical_agency_ids = {
+        agency_id
+        for agency_id, rows in agency_rows.items()
+        if rows and all(row["historical_note"] for row in rows)
+    }
+    current_agency_ids = agency_ids - historical_agency_ids
     agency_ids_without_source = agency_ids - agency_ids_with_source
+    current_agency_ids_without_source = (
+        current_agency_ids - agency_ids_with_source
+    )
+    historical_component_count = sum(
+        1 for row in component_rows if row["historical_note"]
+    )
 
     return {
         "summary": {
@@ -263,7 +293,13 @@ def build_component_census(
             "agencies_referenced_by_components": len(agency_ids),
             "agencies_with_recognized_source": len(agency_ids_with_source),
             "agencies_without_recognized_source": len(agency_ids_without_source),
+            "current_agencies": len(current_agency_ids),
+            "current_agencies_without_recognized_source": len(
+                current_agency_ids_without_source
+            ),
+            "historical_agencies": len(historical_agency_ids),
             "components": len(components),
+            "historical_components": historical_component_count,
             "components_with_recognized_source": components_with_source,
             "components_without_recognized_source": components_without_source,
             "components_without_source_but_candidate_url": no_source_candidate_components,
