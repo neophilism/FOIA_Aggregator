@@ -34,5 +34,15 @@ downloader:
   permanent_download_failure_retry_minutes: 1440
 
 storage:
+  # Use FOIA_STORAGE_BACKEND=b2 in production after B2 credentials are set.
+  backend: "local"
   db_path: "data/foia_archive.db"
+  # Local backend archive directory; also used as a temporary staging area
+  # before verified B2 uploads.
   files_dir: "data/files"
+  b2:
+    bucket: ""
+    region: ""
+    endpoint_url: ""
+    # Keep the initial archive below Backblaze's free 10 GB allowance.
+    max_archive_bytes: 9000000000

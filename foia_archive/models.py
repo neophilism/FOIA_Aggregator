@@ -61,6 +61,8 @@ CREATE TABLE IF NOT EXISTS documents (
     download_status TEXT DEFAULT 'pending',
     download_error TEXT,
     last_download_attempt_at TEXT,
+    storage_backend TEXT DEFAULT 'local',
+    storage_key TEXT,
     FOREIGN KEY (agency_id) REFERENCES agencies(id),
     FOREIGN KEY (office_id) REFERENCES offices(id),
     FOREIGN KEY (reading_room_id) REFERENCES reading_rooms(id)
@@ -75,6 +77,8 @@ DOCUMENTS_ADDITIONAL_COLUMNS = {
     "download_status": "TEXT DEFAULT 'pending'",
     "download_error": "TEXT",
     "last_download_attempt_at": "TEXT",
+    "storage_backend": "TEXT DEFAULT 'local'",
+    "storage_key": "TEXT",
 }
 
 
@@ -116,6 +120,8 @@ INDEX_STATEMENTS = (
     "CREATE INDEX IF NOT EXISTS idx_documents_file_type ON documents(file_type)",
     "CREATE INDEX IF NOT EXISTS idx_documents_download_status ON documents(download_status)",
     "CREATE INDEX IF NOT EXISTS idx_documents_discovered_at ON documents(discovered_at)",
+    "CREATE INDEX IF NOT EXISTS idx_documents_storage_backend ON documents(storage_backend)",
+    "CREATE INDEX IF NOT EXISTS idx_documents_storage_key ON documents(storage_key)",
     "CREATE INDEX IF NOT EXISTS idx_reading_rooms_active ON reading_rooms(active)",
     "CREATE INDEX IF NOT EXISTS idx_reading_rooms_agency_id ON reading_rooms(agency_id)",
     "CREATE INDEX IF NOT EXISTS idx_reading_rooms_office_id ON reading_rooms(office_id)",

@@ -13,10 +13,12 @@ from foia_archive.storage import (
     insert_document,
     query_documents,
     query_documents_page,
+    update_download_metadata,
     upsert_agency,
     upsert_office,
     upsert_reading_room,
 )
+from foia_archive.utils import Config
 from ui import server
 
 
@@ -314,6 +316,53 @@ class SearchPageTests(unittest.TestCase):
                 )
             )
         return response.body.decode("utf-8")
+
+    def test_archived_document_route_serves_local_backend_file(self):
+        archive_file = self.files_dir / "stored" / "record.pdf"
+        archive_file.parent.mkdir(parents=True)
+        archive_file.write_bytes(b"pdf-data")
+
+        conn = get_connection(self.db_path)
+        try:
+            document_id = insert_document(
+                conn,
+                url="https://example.gov/archive-test.pdf",
+                title="Archive test",
+                file_type="pdf",
+                filename="archive-test.pdf",
+                agency_id=None,
+                office_id=None,
+                reading_room_id=None,
+                discovered_at="2026-10-05T00:00:00",
+            )
+            update_download_metadata(
+                conn,
+                document_id,
+                "stored/record.pdf",
+                "2026-10-05T00:00:01",
+                file_size=8,
+                storage_backend="local",
+                storage_key="stored/record.pdf",
+            )
+        finally:
+            conn.close()
+
+        test_config = Config(
+            {
+                "storage": {
+                    "backend": "local",
+                    "db_path": str(self.db_path),
+                    "files_dir": str(self.files_dir),
+                }
+            }
+        )
+        with (
+            patch("ui.server.get_db", side_effect=self.get_db),
+            patch("ui.server.config", test_config),
+        ):
+            response = asyncio.run(server.archived_document(document_id))
+
+        self.assertEqual(Path(response.path), archive_file)
 
     def test_browser_request_accepts_blank_all_agency_and_office_filters(self):
         with patch("ui.server.get_db", side_effect=self.get_db):

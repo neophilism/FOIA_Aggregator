@@ -123,6 +123,39 @@ def _migration_3_indexes(conn: sqlite3.Connection) -> None:
                 raise
 
 
+def _migration_4_archive_storage(conn: sqlite3.Connection) -> None:
+    _ensure_columns(
+        conn,
+        "documents",
+        {
+            "storage_backend": "TEXT DEFAULT 'local'",
+            "storage_key": "TEXT",
+        },
+    )
+    conn.execute(
+        """
+        UPDATE documents
+        SET storage_backend = 'local'
+        WHERE storage_backend IS NULL OR storage_backend = ''
+        """
+    )
+    conn.execute(
+        """
+        UPDATE documents
+        SET storage_key = local_path
+        WHERE (storage_key IS NULL OR storage_key = '')
+          AND local_path IS NOT NULL
+          AND local_path != ''
+        """
+    )
+    for statement in models.INDEX_STATEMENTS:
+        try:
+            conn.execute(statement)
+        except sqlite3.OperationalError as exc:
+            if "no such column" not in str(exc).lower():
+                raise
+
+
 MIGRATIONS: Tuple[
     Tuple[int, str, Callable[[sqlite3.Connection], None]],
     ...,
@@ -130,6 +163,7 @@ MIGRATIONS: Tuple[
     (1, "legacy metadata columns", _migration_1_legacy_metadata_columns),
     (2, "document source relationships", _migration_2_document_sources),
     (3, "archive query indexes", _migration_3_indexes),
+    (4, "archive storage backends", _migration_4_archive_storage),
 )
 
 
@@ -556,8 +590,8 @@ def query_documents(
 
     query = [
         "SELECT d.id, d.title, d.filename, d.file_type, d.published_date,",
-        "       d.discovered_at, d.local_path, d.url, d.download_status,",
-        "       d.download_error, d.file_size,",
+        "       d.discovered_at, d.local_path, d.storage_backend, d.storage_key,",
+        "       d.url, d.download_status, d.download_error, d.file_size,",
         "       a.name AS agency_name, o.name AS office_name",
         "FROM documents d",
         "LEFT JOIN agencies a ON d.agency_id = a.id",
@@ -613,11 +647,13 @@ def query_documents_page(
 def update_download_metadata(
     conn: sqlite3.Connection,
     document_id: int,
-    local_path: str,
+    local_path: Optional[str],
     downloaded_at: str,
     mime_type: Optional[str] = None,
     file_size: Optional[int] = None,
     sha256: Optional[str] = None,
+    storage_backend: str = "local",
+    storage_key: Optional[str] = None,
 ):
     conn.execute(
         """
@@ -627,6 +663,8 @@ def update_download_metadata(
             mime_type = ?,
             file_size = ?,
             sha256 = ?,
+            storage_backend = ?,
+            storage_key = ?,
             download_status = 'downloaded',
             download_error = NULL,
             last_download_attempt_at = ?
@@ -638,6 +676,8 @@ def update_download_metadata(
             mime_type,
             file_size,
             sha256,
+            storage_backend,
+            storage_key if storage_key is not None else local_path,
             downloaded_at,
             document_id,
         ),
@@ -656,6 +696,8 @@ def update_download_failure(
         """
         UPDATE documents
         SET local_path = NULL,
+            storage_backend = NULL,
+            storage_key = NULL,
             downloaded_at = NULL,
             mime_type = NULL,
             file_size = NULL,
@@ -668,6 +710,30 @@ def update_download_failure(
         (status, error, attempted_at, document_id),
     )
     conn.commit()
+
+
+def archived_remote_bytes(conn: sqlite3.Connection, backend: str) -> int:
+    """Return unique archived bytes for a remote backend.
+
+    Content-addressed objects can be referenced by more than one document row,
+    so count each storage key once.
+    """
+    row = conn.execute(
+        """
+        SELECT COALESCE(SUM(file_size), 0) AS total
+        FROM (
+            SELECT storage_key, MAX(COALESCE(file_size, 0)) AS file_size
+            FROM documents
+            WHERE storage_backend = ?
+              AND storage_key IS NOT NULL
+              AND storage_key != ''
+              AND download_status = 'downloaded'
+            GROUP BY storage_key
+        )
+        """,
+        (backend,),
+    ).fetchone()
+    return int(row["total"] or 0)
 
 
 def record_reading_room_crawl_success(

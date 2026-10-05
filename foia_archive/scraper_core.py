@@ -20,7 +20,14 @@ from urllib.parse import unquote, urljoin, urlparse, urlunparse
 import requests
 from bs4 import BeautifulSoup
 
+from .archive_storage import (
+    ArchiveStorageError,
+    B2ArchiveStorage,
+    StorageQuotaReached,
+    get_archive_storage,
+)
 from .storage import (
+    archived_remote_bytes,
     associate_document_source,
     get_connection,
     get_document_by_url,
@@ -963,6 +970,7 @@ PERMANENT_DOWNLOAD_FAILURE_STATUSES = {
     "blocked_url",
     "too_large",
     "content_mismatch",
+    "storage_quota",
 }
 
 
@@ -1043,14 +1051,28 @@ def _process_document_candidate(
             rr["id"],
             datetime.utcnow().isoformat(),
         )
-        if existing["local_path"]:
-            files_dir = Path(config.storage.get("files_dir"))
-            archived_path = files_dir / existing["local_path"]
-            if archived_path.is_file():
-                return False
+        storage_backend = existing["storage_backend"] or (
+            "local" if existing["local_path"] else None
+        )
+        storage_key = existing["storage_key"] or existing["local_path"]
+        if storage_backend and storage_key:
+            try:
+                existing_storage = get_archive_storage(
+                    config,
+                    backend_name=storage_backend,
+                )
+                if existing_storage.exists(storage_key):
+                    return False
+            except ArchiveStorageError as exc:
+                logger.warning(
+                    "Could not verify stored archive object for %s: %s",
+                    canonical,
+                    exc,
+                )
             missing_archive_file = True
             logger.warning(
-                "Stored file missing for %s; retrying download",
+                "Stored archive object missing or unverifiable for %s; "
+                "retrying download",
                 canonical,
             )
         elif not dry_run and not _download_retry_due(
@@ -1080,6 +1102,44 @@ def _process_document_candidate(
     if dry_run:
         return is_new
 
+    try:
+        archive_storage = get_archive_storage(config)
+    except ArchiveStorageError as exc:
+        update_download_failure(
+            conn,
+            doc_id,
+            "storage_error",
+            str(exc),
+            datetime.utcnow().isoformat(),
+        )
+        return is_new
+
+    if config.data.get("_storage_quota_reached"):
+        update_download_failure(
+            conn,
+            doc_id,
+            "storage_quota",
+            "Archive storage safety cap reached; binary download deferred",
+            datetime.utcnow().isoformat(),
+        )
+        return is_new
+
+    if isinstance(archive_storage, B2ArchiveStorage):
+        current_usage = archived_remote_bytes(conn, "b2")
+        if (
+            archive_storage.max_archive_bytes
+            and current_usage >= archive_storage.max_archive_bytes
+        ):
+            config.data["_storage_quota_reached"] = True
+            update_download_failure(
+                conn,
+                doc_id,
+                "storage_quota",
+                "B2 archive safety cap reached; binary download deferred",
+                datetime.utcnow().isoformat(),
+            )
+            return is_new
+
     result = download_document(
         canonical,
         filename_hint,
@@ -1096,17 +1156,55 @@ def _process_document_candidate(
 
     attempted_at = datetime.utcnow().isoformat()
     if result.status == "downloaded" and result.path is not None:
-        files_dir = Path(config.storage.get("files_dir"))
-        stored_path = result.path.relative_to(files_dir)
-        update_download_metadata(
-            conn,
-            doc_id,
-            stored_path.as_posix(),
-            attempted_at,
-            mime_type=result.mime_type,
-            file_size=result.file_size,
-            sha256=result.sha256,
-        )
+        try:
+            current_usage = (
+                archived_remote_bytes(conn, archive_storage.name)
+                if archive_storage.name != "local"
+                else 0
+            )
+            location = archive_storage.store_file(
+                result.path,
+                sha256=result.sha256,
+                filename=filename_hint,
+                mime_type=result.mime_type,
+                current_usage_bytes=current_usage,
+            )
+            update_download_metadata(
+                conn,
+                doc_id,
+                location.local_path,
+                attempted_at,
+                mime_type=result.mime_type,
+                file_size=result.file_size,
+                sha256=result.sha256,
+                storage_backend=location.backend,
+                storage_key=location.key,
+            )
+        except StorageQuotaReached as exc:
+            config.data["_storage_quota_reached"] = True
+            try:
+                result.path.unlink()
+            except OSError:
+                pass
+            update_download_failure(
+                conn,
+                doc_id,
+                "storage_quota",
+                str(exc),
+                attempted_at,
+            )
+        except ArchiveStorageError as exc:
+            try:
+                result.path.unlink()
+            except OSError:
+                pass
+            update_download_failure(
+                conn,
+                doc_id,
+                "storage_error",
+                str(exc),
+                attempted_at,
+            )
     else:
         update_download_failure(
             conn,

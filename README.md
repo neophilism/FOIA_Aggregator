@@ -80,6 +80,29 @@ Document downloads are limited to public HTTP(S) destinations. Redirects are rev
 
 Successful downloads record MIME type, file size, and SHA-256 integrity metadata. Failed attempts retain a classified status and error message for later inspection/retry.
 
+## Archive storage
+
+Local filesystem storage remains the default for development and tests. Production can use a private Backblaze B2 bucket through B2's S3-compatible API.
+
+Set the non-secret bucket settings in `config/settings.yaml`, then provide credentials through environment variables:
+
+```bash
+export FOIA_STORAGE_BACKEND="b2"
+export B2_KEY_ID="..."
+export B2_APPLICATION_KEY="..."
+export B2_BUCKET="..."
+export B2_REGION="..."
+export B2_ENDPOINT_URL="https://s3.<region>.backblazeb2.com"
+```
+
+The B2 application key should be scoped to the archive bucket with only the permissions required to read and write archive objects. Do not commit credentials to the repository.
+
+B2 objects are content-addressed by SHA-256 under `documents/<hash-prefix>/<sha256>.<ext>`. If the same binary is encountered again, the existing object is reused rather than uploaded as another object. Uploads are verified by a follow-up object metadata request before the local staging file is removed.
+
+The initial configuration sets `storage.b2.max_archive_bytes` to **9,000,000,000 bytes**. This is an application safety ceiling below the 10 GB free-storage allowance. When the cap is reached, metadata discovery continues but new document binaries are marked `storage_quota` and deferred. Raise or remove the ceiling when paid storage is available.
+
+The SQLite database stores `storage_backend` and `storage_key` for each archived document. Existing local archive rows are automatically backfilled during schema migration. The web UI uses `/archive/{document_id}` for downloads: local records are served from the local archive and private B2 records receive a short-lived signed download URL.
+
 ## Continuous-operation resilience
 
 The `daemon` command is designed to stay alive across ordinary application and network failures.
