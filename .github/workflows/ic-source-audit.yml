@@ -1,0 +1,33 @@
+name: Intelligence Community source audit
+
+on:
+  push:
+    branches:
+      - feat/source-census
+  workflow_dispatch:
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+
+      - name: Audit all 18 IC public sources
+        run: python scripts/ic_source_audit.py
+
+      - name: Upload IC source audit
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: intelligence-community-source-audit
+          path: ic-source-audit-results/
+          if-no-files-found: warn
