@@ -48,7 +48,7 @@ from .storage import (
     update_download_metadata,
     upsert_document_text,
 )
-from .text_extraction import extract_document_text
+from .text_extraction import OCRSettings, extract_document_text
 from .utils import Config, clean_filename, logger
 
 
@@ -1288,6 +1288,7 @@ def _process_document_candidate(
                 result.path,
                 file_type,
                 max_chars=max_indexed_chars,
+                ocr=OCRSettings.from_mapping(config.data.get("ocr")),
             )
 
             current_usage = (
@@ -1319,6 +1320,7 @@ def _process_document_candidate(
                 body=extraction.text,
                 extraction_status=extraction.status,
                 extraction_error=extraction.error,
+                extraction_method=extraction.method,
                 extracted_at=attempted_at,
                 character_count=extraction.character_count,
                 truncated=extraction.truncated,
