@@ -29,6 +29,8 @@ class SourceReplacementTests(unittest.TestCase):
                 "https://www.restorethegulf.gov/reports/",
             "https://www.whitehouse.gov/ipec/legal/":
                 "https://www.whitehouse.gov/ipec",
+            "https://www.ntsb.gov/about/foia/Pages/default.aspx":
+                "https://securefoia.ntsb.gov/app/ReadingRoom.aspx",
         }
 
         for old_url, new_url in replacements.items():
