@@ -2,13 +2,16 @@
 from __future__ import annotations
 
 import math
+import os
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlencode
+from xml.sax.saxutils import escape
 
 from fastapi import FastAPI, HTTPException, Query, Request
-from fastapi.responses import FileResponse, HTMLResponse, RedirectResponse
+from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -33,6 +36,7 @@ init_db(DB_PATH, FILES_DIR)
 
 app = FastAPI(title="FOIA Aggregator")
 templates = Jinja2Templates(directory="ui/templates")
+PUBLIC_BASE_URL = (os.getenv("FOIA_PUBLIC_BASE_URL") or "").strip().rstrip("/")
 app.mount("/static", StaticFiles(directory="ui/static"), name="static")
 app.mount("/files", StaticFiles(directory=str(FILES_DIR)), name="files")
 
@@ -52,6 +56,114 @@ def human_file_size(value: Optional[int]) -> str:
 
 
 templates.env.filters["filesize"] = human_file_size
+
+
+def human_timestamp(value: Optional[str]) -> str:
+    if not value:
+        return "Not yet updated"
+    raw = str(value).strip()
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        parsed = parsed.astimezone(timezone.utc)
+        return parsed.strftime("%b %-d, %Y · %H:%M UTC")
+    except (TypeError, ValueError):
+        return raw
+
+
+templates.env.filters["timestamp"] = human_timestamp
+
+
+def _public_origin(request: Request) -> str:
+    return PUBLIC_BASE_URL or str(request.base_url).rstrip("/")
+
+
+def _canonical_url(request: Request) -> str:
+    origin = _public_origin(request)
+    query = f"?{request.url.query}" if request.url.query else ""
+    return f"{origin}{request.url.path}{query}"
+
+
+def _template_context(request: Request, **extra):
+    return {
+        "canonical_url": _canonical_url(request),
+        **extra,
+    }
+
+
+@app.middleware("http")
+async def public_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = (
+        "camera=(), microphone=(), geolocation=(), payment=()"
+    )
+    forwarded_proto = request.headers.get("x-forwarded-proto", "")
+    if request.url.scheme == "https" or forwarded_proto == "https":
+        response.headers["Strict-Transport-Security"] = (
+            "max-age=31536000; includeSubDomains"
+        )
+    return response
+
+
+@app.exception_handler(404)
+async def not_found_page(request: Request, exc):
+    return templates.TemplateResponse(
+        request=request,
+        name="error.html",
+        context=_template_context(
+            request,
+            status_code=404,
+            heading="Record or page not found",
+            message=(
+                "The requested page is not in this archive. "
+                "Try searching the released-records index instead."
+            ),
+        ),
+        status_code=404,
+    )
+
+
+@app.get("/robots.txt", response_class=PlainTextResponse)
+async def robots_txt(request: Request):
+    origin = _public_origin(request)
+    return (
+        "User-agent: *\n"
+        "Allow: /\n"
+        "Disallow: /archive/\n"
+        f"Sitemap: {origin}/sitemap.xml\n"
+    )
+
+
+@app.get("/sitemap.xml")
+async def sitemap_xml(request: Request):
+    origin = _public_origin(request)
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id FROM documents ORDER BY id"
+        ).fetchall()
+    finally:
+        conn.close()
+
+    urls = [f"{origin}/", f"{origin}/about"]
+    urls.extend(f"{origin}/record/{row['id']}" for row in rows)
+    body = [
+        '<?xml version="1.0" encoding="UTF-8"?>',
+        '<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">',
+    ]
+    body.extend(
+        f"  <url><loc>{escape(url)}</loc></url>"
+        for url in urls
+    )
+    body.append("</urlset>")
+    return Response(
+        content="\n".join(body),
+        media_type="application/xml",
+    )
 
 
 def get_db() -> sqlite3.Connection:
@@ -157,7 +269,7 @@ async def about_page(request: Request):
     return templates.TemplateResponse(
         request=request,
         name="about.html",
-        context={"stats": stats},
+        context=_template_context(request, stats=stats),
     )
 
 
@@ -175,10 +287,11 @@ async def record_detail(request: Request, document_id: int):
     return templates.TemplateResponse(
         request=request,
         name="record.html",
-        context={
-            "document": document,
-            "sources": sources,
-        },
+        context=_template_context(
+            request,
+            document=document,
+            sources=sources,
+        ),
     )
 
 
@@ -339,13 +452,14 @@ async def search_page(
     return templates.TemplateResponse(
         request=request,
         name="search.html",
-        context={
-            "agencies": agencies,
-            "offices": offices,
-            "file_types": file_types,
-            "documents": document_items,
-            "stats": stats,
-            "filters_active": any(
+        context=_template_context(
+            request,
+            agencies=agencies,
+            offices=offices,
+            file_types=file_types,
+            documents=document_items,
+            stats=stats,
+            filters_active=any(
                 (
                     agency_filter_id,
                     office_filter_id,
@@ -356,17 +470,17 @@ async def search_page(
                     page_size != 50,
                 )
             ),
-            "title_query": title_query or "",
-            "selected_agency": agency_filter_id,
-            "selected_office": office_filter_id,
-            "selected_file_type": file_type,
-            "start_date": start_date,
-            "end_date": end_date,
-            "sort": sort,
-            "page_size": page_size,
-            "total_results": total_results,
-            "first_result": first_result,
-            "last_result": last_result,
-            "pagination": pagination,
-        },
+            title_query=title_query or "",
+            selected_agency=agency_filter_id,
+            selected_office=office_filter_id,
+            selected_file_type=file_type,
+            start_date=start_date,
+            end_date=end_date,
+            sort=sort,
+            page_size=page_size,
+            total_results=total_results,
+            first_result=first_result,
+            last_result=last_result,
+            pagination=pagination,
+        ),
     )
