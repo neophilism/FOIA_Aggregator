@@ -426,9 +426,11 @@ def write_markdown(census: dict, path: Path) -> None:
                 "## Live source-root probes",
                 "",
                 f"- Unique source roots probed: **{probe_summary['sources_probed']}**",
-                f"- Agencies represented by recognized sources: **{probe_summary['agencies_with_sources']}**",
-                f"- Agencies with ≥1 reachable source from this runner: **{probe_summary['agencies_with_reachable_source']}**",
-                f"- Agencies with no reachable source from this runner: **{probe_summary['agencies_without_reachable_source']}**",
+                f"- Agencies represented by recognized sources (including historical): **{probe_summary['agencies_with_sources']}**",
+                f"- Current agencies represented by recognized sources: **{probe_summary['current_agencies_with_sources']}**",
+                f"- Historical agencies retained with old sources: **{probe_summary['historical_agencies_with_sources']}**",
+                f"- Current agencies with ≥1 reachable source from this runner: **{probe_summary['agencies_with_reachable_source']}**",
+                f"- Current agencies with no reachable source from this runner: **{probe_summary['agencies_without_reachable_source']}**",
             ]
         )
         for category, count in probe_summary["category_counts"].items():
@@ -441,7 +443,7 @@ def write_markdown(census: dict, path: Path) -> None:
             lines.extend(
                 [
                     "",
-                    "### Agencies with known sources but no reachable source from this runner",
+                    "### Current agencies with known sources but no reachable source from this runner",
                     "",
                 ]
             )
