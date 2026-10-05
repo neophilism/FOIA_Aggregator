@@ -148,6 +148,33 @@ class SecureDownloaderTests(unittest.TestCase):
         self.assertTrue(response.closed)
         self.assertEqual(list(self.files_dir.glob(".partial-*")), [])
 
+    def test_html_response_for_document_url_is_rejected(self):
+        response = FakeResponse(
+            200,
+            {"Content-Type": "text/html; charset=utf-8"},
+            [b"<html><body>Not the document</body></html>"],
+        )
+        with (
+            patch(
+                "foia_archive.scraper_core.socket.getaddrinfo",
+                return_value=PUBLIC_ADDRINFO,
+            ),
+            patch(
+                "foia_archive.scraper_core.requests.get",
+                return_value=response,
+            ),
+        ):
+            result = download_document(
+                "https://example.gov/report.pdf",
+                "report.pdf",
+                self.config,
+            )
+
+        self.assertEqual(result.status, "content_mismatch")
+        self.assertIn("returned text/html", result.error)
+        self.assertTrue(response.closed)
+        self.assertEqual(list(self.files_dir.iterdir()), [])
+
     def test_declared_oversize_download_is_rejected_without_archive_file(self):
         response = FakeResponse(
             200,

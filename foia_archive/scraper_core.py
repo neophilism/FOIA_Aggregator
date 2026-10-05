@@ -20,6 +20,7 @@ import requests
 from bs4 import BeautifulSoup
 
 from .storage import (
+    associate_document_source,
     get_connection,
     get_document_by_url,
     insert_document,
@@ -785,13 +786,22 @@ def download_document(
                     error=f"HTTP {status_code} while downloading {final_url}",
                 )
 
+            mime_type = _content_type(response) or None
+            if mime_type in HTML_MIME_TYPES:
+                return DownloadResult(
+                    status="content_mismatch",
+                    error=(
+                        f"Expected an archive document at {url}, but "
+                        f"{final_url} returned {mime_type}"
+                    ),
+                )
+
             target_path = _archive_path(url, files_dir, filename_hint)
             file_size, sha256 = _stream_response_to_file(
                 response,
                 target_path,
                 max_bytes,
             )
-            mime_type = _content_type(response) or None
             return DownloadResult(
                 status="downloaded",
                 path=target_path,
@@ -854,6 +864,12 @@ def _process_document_candidate(
     if existing:
         update_document_published_date_if_missing(conn, canonical, published_date)
         doc_id = existing["id"]
+        associate_document_source(
+            conn,
+            doc_id,
+            rr["id"],
+            datetime.utcnow().isoformat(),
+        )
         if existing["local_path"]:
             files_dir = Path(config.storage.get("files_dir"))
             archived_path = files_dir / existing["local_path"]

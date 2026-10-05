@@ -86,3 +86,39 @@ READING_ROOMS_ADDITIONAL_COLUMNS = {
     "last_error": "TEXT",
     "last_error_at": "TEXT",
 }
+
+
+SCHEMA_MIGRATIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS schema_migrations (
+    version INTEGER PRIMARY KEY,
+    name TEXT NOT NULL,
+    applied_at TEXT NOT NULL
+);
+"""
+
+DOCUMENT_SOURCES_TABLE = """
+CREATE TABLE IF NOT EXISTS document_sources (
+    document_id INTEGER NOT NULL,
+    reading_room_id INTEGER NOT NULL,
+    first_seen_at TEXT,
+    last_seen_at TEXT,
+    PRIMARY KEY (document_id, reading_room_id),
+    FOREIGN KEY (document_id) REFERENCES documents(id) ON DELETE CASCADE,
+    FOREIGN KEY (reading_room_id) REFERENCES reading_rooms(id) ON DELETE CASCADE
+);
+"""
+
+INDEX_STATEMENTS = (
+    "CREATE INDEX IF NOT EXISTS idx_documents_agency_id ON documents(agency_id)",
+    "CREATE INDEX IF NOT EXISTS idx_documents_office_id ON documents(office_id)",
+    "CREATE INDEX IF NOT EXISTS idx_documents_reading_room_id ON documents(reading_room_id)",
+    "CREATE INDEX IF NOT EXISTS idx_documents_published_date ON documents(published_date)",
+    "CREATE INDEX IF NOT EXISTS idx_documents_file_type ON documents(file_type)",
+    "CREATE INDEX IF NOT EXISTS idx_documents_download_status ON documents(download_status)",
+    "CREATE INDEX IF NOT EXISTS idx_documents_discovered_at ON documents(discovered_at)",
+    "CREATE INDEX IF NOT EXISTS idx_reading_rooms_active ON reading_rooms(active)",
+    "CREATE INDEX IF NOT EXISTS idx_reading_rooms_agency_id ON reading_rooms(agency_id)",
+    "CREATE INDEX IF NOT EXISTS idx_reading_rooms_office_id ON reading_rooms(office_id)",
+    "CREATE INDEX IF NOT EXISTS idx_reading_rooms_last_seen_at ON reading_rooms(last_seen_at)",
+    "CREATE INDEX IF NOT EXISTS idx_document_sources_reading_room_id ON document_sources(reading_room_id, document_id)",
+)

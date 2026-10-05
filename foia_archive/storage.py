@@ -3,8 +3,9 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from . import models
 
@@ -14,30 +15,44 @@ def ensure_dirs(db_path: Path, files_dir: Path) -> None:
     db_path.parent.mkdir(parents=True, exist_ok=True)
 
 
+DB_BUSY_TIMEOUT_MS = 5000
+
+
 def get_connection(db_path: Path | str) -> sqlite3.Connection:
     db_path = Path(db_path)
-    conn = sqlite3.connect(db_path)
+    conn = sqlite3.connect(db_path, timeout=DB_BUSY_TIMEOUT_MS / 1000)
     conn.row_factory = sqlite3.Row
+    conn.execute("PRAGMA foreign_keys = ON")
+    conn.execute(f"PRAGMA busy_timeout = {DB_BUSY_TIMEOUT_MS}")
     return conn
 
 
-def init_db(db_path: Path | str, files_dir: Path | str) -> None:
-    db_path = Path(db_path)
-    files_dir = Path(files_dir)
-    ensure_dirs(db_path, files_dir)
-    conn = get_connection(db_path)
-    cur = conn.cursor()
-    cur.execute(models.AGENCIES_TABLE)
-    cur.execute(models.OFFICES_TABLE)
-    cur.execute(models.READING_ROOMS_TABLE)
-    cur.execute(models.DOCUMENTS_TABLE)
-
-    reading_room_columns = {
-        row["name"] for row in conn.execute("PRAGMA table_info(reading_rooms)").fetchall()
+def _table_columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    return {
+        row["name"]
+        for row in conn.execute(f"PRAGMA table_info({table})").fetchall()
     }
-    for column, definition in models.READING_ROOMS_ADDITIONAL_COLUMNS.items():
-        if column not in reading_room_columns:
-            conn.execute(f"ALTER TABLE reading_rooms ADD COLUMN {column} {definition}")
+
+
+def _ensure_columns(
+    conn: sqlite3.Connection,
+    table: str,
+    columns: Dict[str, str],
+) -> None:
+    existing = _table_columns(conn, table)
+    for column, definition in columns.items():
+        if column not in existing:
+            conn.execute(
+                f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+            )
+
+
+def _migration_1_legacy_metadata_columns(conn: sqlite3.Connection) -> None:
+    _ensure_columns(
+        conn,
+        "reading_rooms",
+        models.READING_ROOMS_ADDITIONAL_COLUMNS,
+    )
     conn.execute(
         """
         UPDATE reading_rooms
@@ -46,31 +61,129 @@ def init_db(db_path: Path | str, files_dir: Path | str) -> None:
         """
     )
 
-    existing_columns = {
-        row["name"] for row in conn.execute("PRAGMA table_info(documents)").fetchall()
+    _ensure_columns(
+        conn,
+        "documents",
+        models.DOCUMENTS_ADDITIONAL_COLUMNS,
+    )
+    document_columns = _table_columns(conn, "documents")
+    if {"local_path", "download_status"}.issubset(document_columns):
+        conn.execute(
+            """
+            UPDATE documents
+            SET download_status = 'downloaded'
+            WHERE local_path IS NOT NULL
+              AND local_path != ''
+              AND (download_status IS NULL OR download_status IN ('', 'pending'))
+            """
+        )
+        conn.execute(
+            """
+            UPDATE documents
+            SET download_status = 'pending'
+            WHERE (local_path IS NULL OR local_path = '')
+              AND (download_status IS NULL OR download_status = '')
+            """
+        )
+
+
+def _migration_2_document_sources(conn: sqlite3.Connection) -> None:
+    conn.execute(models.DOCUMENT_SOURCES_TABLE)
+    document_columns = _table_columns(conn, "documents")
+    if {"id", "reading_room_id", "discovered_at"}.issubset(document_columns):
+        conn.execute(
+            """
+            INSERT OR IGNORE INTO document_sources (
+                document_id,
+                reading_room_id,
+                first_seen_at,
+                last_seen_at
+            )
+            SELECT
+                d.id,
+                d.reading_room_id,
+                d.discovered_at,
+                d.discovered_at
+            FROM documents d
+            JOIN reading_rooms rr ON rr.id = d.reading_room_id
+            WHERE d.reading_room_id IS NOT NULL
+            """
+        )
+
+
+def _migration_3_indexes(conn: sqlite3.Connection) -> None:
+    for statement in models.INDEX_STATEMENTS:
+        try:
+            conn.execute(statement)
+        except sqlite3.OperationalError as exc:
+            # Synthetic/very old partial schemas may lack a historical column.
+            # Normal production schemas have all indexed columns; skip only a
+            # missing-column index so the rest of the database can upgrade.
+            if "no such column" not in str(exc).lower():
+                raise
+
+
+MIGRATIONS: Tuple[
+    Tuple[int, str, Callable[[sqlite3.Connection], None]],
+    ...,
+] = (
+    (1, "legacy metadata columns", _migration_1_legacy_metadata_columns),
+    (2, "document source relationships", _migration_2_document_sources),
+    (3, "archive query indexes", _migration_3_indexes),
+)
+
+
+def _apply_migrations(conn: sqlite3.Connection) -> None:
+    conn.execute(models.SCHEMA_MIGRATIONS_TABLE)
+    applied = {
+        row["version"]
+        for row in conn.execute(
+            "SELECT version FROM schema_migrations"
+        ).fetchall()
     }
-    for column, definition in models.DOCUMENTS_ADDITIONAL_COLUMNS.items():
-        if column not in existing_columns:
-            conn.execute(f"ALTER TABLE documents ADD COLUMN {column} {definition}")
-    conn.execute(
-        """
-        UPDATE documents
-        SET download_status = 'downloaded'
-        WHERE local_path IS NOT NULL
-          AND local_path != ''
-          AND (download_status IS NULL OR download_status IN ('', 'pending'))
-        """
-    )
-    conn.execute(
-        """
-        UPDATE documents
-        SET download_status = 'pending'
-        WHERE (local_path IS NULL OR local_path = '')
-          AND (download_status IS NULL OR download_status = '')
-        """
-    )
-    conn.commit()
-    conn.close()
+
+    for version, name, migration in MIGRATIONS:
+        if version in applied:
+            continue
+        with conn:
+            migration(conn)
+            conn.execute(
+                """
+                INSERT INTO schema_migrations (version, name, applied_at)
+                VALUES (?, ?, ?)
+                """,
+                (
+                    version,
+                    name,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
+
+def get_schema_version(conn: sqlite3.Connection) -> int:
+    conn.execute(models.SCHEMA_MIGRATIONS_TABLE)
+    row = conn.execute(
+        "SELECT COALESCE(MAX(version), 0) AS version FROM schema_migrations"
+    ).fetchone()
+    return int(row["version"])
+
+
+def init_db(db_path: Path | str, files_dir: Path | str) -> None:
+    db_path = Path(db_path)
+    files_dir = Path(files_dir)
+    ensure_dirs(db_path, files_dir)
+    conn = get_connection(db_path)
+    try:
+        conn.execute("PRAGMA journal_mode = WAL")
+        conn.execute("PRAGMA synchronous = NORMAL")
+        conn.execute(models.AGENCIES_TABLE)
+        conn.execute(models.OFFICES_TABLE)
+        conn.execute(models.READING_ROOMS_TABLE)
+        conn.execute(models.DOCUMENTS_TABLE)
+        _apply_migrations(conn)
+        conn.commit()
+    finally:
+        conn.close()
 
 
 def upsert_agency(conn: sqlite3.Connection, slug: str, name: str, raw_json: Dict[str, Any]) -> int:
@@ -190,6 +303,45 @@ def document_exists(conn: sqlite3.Connection, url: str) -> bool:
     return get_document_by_url(conn, url) is not None
 
 
+def _associate_document_source_no_commit(
+    conn: sqlite3.Connection,
+    document_id: int,
+    reading_room_id: int,
+    seen_at: str,
+) -> None:
+    conn.execute(
+        """
+        INSERT INTO document_sources (
+            document_id,
+            reading_room_id,
+            first_seen_at,
+            last_seen_at
+        )
+        VALUES (?, ?, ?, ?)
+        ON CONFLICT(document_id, reading_room_id) DO UPDATE SET
+            last_seen_at = excluded.last_seen_at
+        """,
+        (document_id, reading_room_id, seen_at, seen_at),
+    )
+
+
+def associate_document_source(
+    conn: sqlite3.Connection,
+    document_id: int,
+    reading_room_id: Optional[int],
+    seen_at: str,
+) -> None:
+    if reading_room_id is None:
+        return
+    _associate_document_source_no_commit(
+        conn,
+        document_id,
+        reading_room_id,
+        seen_at,
+    )
+    conn.commit()
+
+
 def insert_document(
     conn: sqlite3.Connection,
     url: str,
@@ -222,8 +374,16 @@ def insert_document(
             published_date,
         ),
     )
+    document_id = cur.lastrowid
+    if reading_room_id is not None:
+        _associate_document_source_no_commit(
+            conn,
+            document_id,
+            reading_room_id,
+            discovered_at,
+        )
     conn.commit()
-    return cur.lastrowid
+    return document_id
 
 
 
@@ -272,11 +432,37 @@ def query_documents(
     params: List[Any] = []
 
     if agency_id:
-        query.append("AND d.agency_id = ?")
-        params.append(agency_id)
+        query.append(
+            """
+            AND (
+                d.agency_id = ?
+                OR EXISTS (
+                    SELECT 1
+                    FROM document_sources ds
+                    JOIN reading_rooms rr ON rr.id = ds.reading_room_id
+                    WHERE ds.document_id = d.id
+                      AND rr.agency_id = ?
+                )
+            )
+            """
+        )
+        params.extend([agency_id, agency_id])
     if office_id:
-        query.append("AND d.office_id = ?")
-        params.append(office_id)
+        query.append(
+            """
+            AND (
+                d.office_id = ?
+                OR EXISTS (
+                    SELECT 1
+                    FROM document_sources ds
+                    JOIN reading_rooms rr ON rr.id = ds.reading_room_id
+                    WHERE ds.document_id = d.id
+                      AND rr.office_id = ?
+                )
+            )
+            """
+        )
+        params.extend([office_id, office_id])
     if file_type:
         query.append("AND d.file_type = ?")
         params.append(file_type)
