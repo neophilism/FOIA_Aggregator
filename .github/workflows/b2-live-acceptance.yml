@@ -1,0 +1,50 @@
+name: B2 live acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      region:
+        description: Backblaze B2 region
+        required: true
+        default: us-east-005
+      endpoint_url:
+        description: Backblaze B2 S3 endpoint URL
+        required: true
+        default: https://s3.us-east-005.backblazeb2.com
+      bucket_name:
+        description: Optional bucket name; leave blank for key-scoped auto-discovery
+        required: false
+        default: ""
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+      B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+      B2_REGION: ${{ inputs.region }}
+      B2_ENDPOINT_URL: ${{ inputs.endpoint_url }}
+      B2_BUCKET: ${{ inputs.bucket_name }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Verify required secrets exist
+        shell: bash
+        run: |
+          if [ -z "$B2_KEY_ID" ] || [ -z "$B2_APPLICATION_KEY" ]; then
+            echo "Missing B2_KEY_ID or B2_APPLICATION_KEY repository secret."
+            exit 1
+          fi
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Run live B2 acceptance
+        run: python scripts/b2_live_acceptance.py
