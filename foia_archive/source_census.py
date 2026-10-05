@@ -290,6 +290,20 @@ def build_component_census(
         1 for row in component_rows if row["historical_note"]
     )
 
+    for row in component_rows:
+        if row["historical_note"]:
+            coverage_status = "historical"
+        elif row["recognized_source_count"] > 0:
+            coverage_status = "direct"
+        elif row["agency_id"] in agency_ids_with_source:
+            coverage_status = "covered_by_agency"
+        else:
+            coverage_status = "uncovered"
+        row["agency_has_recognized_source"] = (
+            row["agency_id"] in agency_ids_with_source
+        )
+        row["coverage_status"] = coverage_status
+
     return {
         "summary": {
             "agencies_returned": len(agencies),
