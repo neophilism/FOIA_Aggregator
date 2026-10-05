@@ -33,6 +33,11 @@ downloader:
   download_failure_retry_minutes: 60
   permanent_download_failure_retry_minutes: 1440
 
+search:
+  # Bound per-document indexed text so one unusually large release cannot
+  # dominate SQLite memory/disk. OCR can reuse the same ceiling later.
+  max_indexed_chars_per_document: 5000000
+
 database_backup:
   enabled: true
   interval_hours: 24
