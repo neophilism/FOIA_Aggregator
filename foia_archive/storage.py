@@ -407,34 +407,45 @@ def update_document_published_date_if_missing(
     return cur.rowcount > 0
 
 
-def query_documents(
-    conn: sqlite3.Connection,
+SORT_ORDERS = {
+    "discovered_desc": "d.discovered_at DESC, d.id DESC",
+    "discovered_asc": "d.discovered_at ASC, d.id ASC",
+    "published_desc": (
+        "CASE WHEN d.published_date IS NULL OR d.published_date = '' THEN 1 ELSE 0 END ASC, "
+        "d.published_date DESC, d.id DESC"
+    ),
+    "published_asc": (
+        "CASE WHEN d.published_date IS NULL OR d.published_date = '' THEN 1 ELSE 0 END ASC, "
+        "d.published_date ASC, d.id ASC"
+    ),
+    "title_asc": "LOWER(COALESCE(d.title, d.filename, '')) ASC, d.id ASC",
+    "title_desc": "LOWER(COALESCE(d.title, d.filename, '')) DESC, d.id DESC",
+}
+
+
+def _escape_like(value: str) -> str:
+    return (
+        value.replace("\\", "\\\\")
+        .replace("%", "\\%")
+        .replace("_", "\\_")
+    )
+
+
+def _document_filter_sql(
     agency_id: Optional[int] = None,
     office_id: Optional[int] = None,
     file_type: Optional[str] = None,
     start_date: Optional[str] = None,
     end_date: Optional[str] = None,
-) -> List[sqlite3.Row]:
-    """Return documents matching UI filters.
-
-    Unknown publication dates remain visible when no publication-date bound is
-    supplied. If either date bound is supplied, unknown dates are intentionally
-    excluded because they cannot be known to satisfy the requested interval.
-    """
-    query = [
-        "SELECT d.id, d.title, d.file_type, d.published_date, d.discovered_at, d.local_path, d.url,",
-        "       a.name AS agency_name, o.name AS office_name",
-        "FROM documents d",
-        "LEFT JOIN agencies a ON d.agency_id = a.id",
-        "LEFT JOIN offices o ON d.office_id = o.id",
-        "WHERE 1=1",
-    ]
+    title_query: Optional[str] = None,
+) -> tuple[List[str], List[Any]]:
+    clauses = ["1=1"]
     params: List[Any] = []
 
     if agency_id:
-        query.append(
+        clauses.append(
             """
-            AND (
+            (
                 d.agency_id = ?
                 OR EXISTS (
                     SELECT 1
@@ -448,9 +459,9 @@ def query_documents(
         )
         params.extend([agency_id, agency_id])
     if office_id:
-        query.append(
+        clauses.append(
             """
-            AND (
+            (
                 d.office_id = ?
                 OR EXISTS (
                     SELECT 1
@@ -464,19 +475,140 @@ def query_documents(
         )
         params.extend([office_id, office_id])
     if file_type:
-        query.append("AND d.file_type = ?")
+        clauses.append("d.file_type = ?")
         params.append(file_type)
     if start_date or end_date:
-        query.append("AND d.published_date IS NOT NULL AND d.published_date != ''")
+        clauses.append("d.published_date IS NOT NULL AND d.published_date != ''")
     if start_date:
-        query.append("AND d.published_date >= ?")
+        clauses.append("d.published_date >= ?")
         params.append(start_date)
     if end_date:
-        query.append("AND d.published_date <= ?")
+        clauses.append("d.published_date <= ?")
         params.append(end_date)
+    if title_query:
+        escaped = _escape_like(title_query.strip())
+        if escaped:
+            clauses.append(
+                """
+                (
+                    COALESCE(d.title, '') LIKE ? ESCAPE '\\'
+                    OR COALESCE(d.filename, '') LIKE ? ESCAPE '\\'
+                )
+                """
+            )
+            pattern = f"%{escaped}%"
+            params.extend([pattern, pattern])
 
-    query.append("ORDER BY d.discovered_at DESC LIMIT 200")
+    return clauses, params
+
+
+def count_documents(
+    conn: sqlite3.Connection,
+    agency_id: Optional[int] = None,
+    office_id: Optional[int] = None,
+    file_type: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    title_query: Optional[str] = None,
+) -> int:
+    clauses, params = _document_filter_sql(
+        agency_id=agency_id,
+        office_id=office_id,
+        file_type=file_type,
+        start_date=start_date,
+        end_date=end_date,
+        title_query=title_query,
+    )
+    row = conn.execute(
+        "SELECT COUNT(*) AS total FROM documents d WHERE " + " AND ".join(clauses),
+        params,
+    ).fetchone()
+    return int(row["total"])
+
+
+def query_documents(
+    conn: sqlite3.Connection,
+    agency_id: Optional[int] = None,
+    office_id: Optional[int] = None,
+    file_type: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    title_query: Optional[str] = None,
+    sort: str = "discovered_desc",
+    limit: Optional[int] = 200,
+    offset: int = 0,
+) -> List[sqlite3.Row]:
+    """Return documents matching UI filters.
+
+    Unknown publication dates remain visible when no publication-date bound is
+    supplied. If either date bound is supplied, unknown dates are intentionally
+    excluded because they cannot be known to satisfy the requested interval.
+    """
+    clauses, params = _document_filter_sql(
+        agency_id=agency_id,
+        office_id=office_id,
+        file_type=file_type,
+        start_date=start_date,
+        end_date=end_date,
+        title_query=title_query,
+    )
+    order_by = SORT_ORDERS.get(sort, SORT_ORDERS["discovered_desc"])
+
+    query = [
+        "SELECT d.id, d.title, d.filename, d.file_type, d.published_date,",
+        "       d.discovered_at, d.local_path, d.url, d.download_status,",
+        "       d.download_error, d.file_size,",
+        "       a.name AS agency_name, o.name AS office_name",
+        "FROM documents d",
+        "LEFT JOIN agencies a ON d.agency_id = a.id",
+        "LEFT JOIN offices o ON d.office_id = o.id",
+        "WHERE " + " AND ".join(clauses),
+        f"ORDER BY {order_by}",
+    ]
+    if limit is not None:
+        query.append("LIMIT ? OFFSET ?")
+        params.extend([max(0, int(limit)), max(0, int(offset))])
+
     return conn.execute("\n".join(query), params).fetchall()
+
+
+def query_documents_page(
+    conn: sqlite3.Connection,
+    agency_id: Optional[int] = None,
+    office_id: Optional[int] = None,
+    file_type: Optional[str] = None,
+    start_date: Optional[str] = None,
+    end_date: Optional[str] = None,
+    title_query: Optional[str] = None,
+    sort: str = "discovered_desc",
+    page: int = 1,
+    page_size: int = 50,
+) -> tuple[List[sqlite3.Row], int]:
+    page = max(1, int(page))
+    page_size = min(100, max(1, int(page_size)))
+    total = count_documents(
+        conn,
+        agency_id=agency_id,
+        office_id=office_id,
+        file_type=file_type,
+        start_date=start_date,
+        end_date=end_date,
+        title_query=title_query,
+    )
+    rows = query_documents(
+        conn,
+        agency_id=agency_id,
+        office_id=office_id,
+        file_type=file_type,
+        start_date=start_date,
+        end_date=end_date,
+        title_query=title_query,
+        sort=sort,
+        limit=page_size,
+        offset=(page - 1) * page_size,
+    )
+    return rows, total
+
 
 def update_download_metadata(
     conn: sqlite3.Connection,
