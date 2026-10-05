@@ -170,7 +170,7 @@ def _write_summary(stats: dict) -> None:
     lines = [
         "## FOIA Aggregator presentation corpus",
         "",
-        f"- Agencies represented: **{stats['agencies']:,}**",
+        f"- Agencies catalogued: **{stats['agencies']:,}**",
         f"- Offices/components: **{stats['offices']:,}**",
         f"- Active official sources: **{stats['active_sources']:,}**",
         f"- Records discovered: **{stats['records']:,}**",
