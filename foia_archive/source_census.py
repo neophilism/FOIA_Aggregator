@@ -645,14 +645,28 @@ def attach_probe_results(
                 result.category
             )
 
+    historical_agency_names = {
+        row.get("agency_name")
+        for row in census.get("components", [])
+        if row.get("historical_note") and row.get("agency_name")
+    }
+    current_agency_sources = {
+        agency_name: urls
+        for agency_name, urls in agency_sources.items()
+        if agency_name not in historical_agency_names
+    }
+
     agencies_with_reachable_source = sorted(
         agency_name
-        for agency_name, categories in agency_categories.items()
-        if categories & REACHABLE_PROBE_CATEGORIES
+        for agency_name in current_agency_sources
+        if (
+            agency_categories.get(agency_name, set())
+            & REACHABLE_PROBE_CATEGORIES
+        )
     )
     agencies_without_reachable_source = sorted(
         agency_name
-        for agency_name in agency_sources
+        for agency_name in current_agency_sources
         if not (
             agency_categories.get(agency_name, set())
             & REACHABLE_PROBE_CATEGORIES
@@ -716,6 +730,10 @@ def attach_probe_results(
         "sources_probed": len(probe_results),
         "category_counts": dict(sorted(category_counts.items())),
         "agencies_with_sources": len(agency_sources),
+        "current_agencies_with_sources": len(current_agency_sources),
+        "historical_agencies_with_sources": len(
+            set(agency_sources) & historical_agency_names
+        ),
         "agencies_with_reachable_source": len(agencies_with_reachable_source),
         "agencies_without_reachable_source": len(
             agencies_without_reachable_source
