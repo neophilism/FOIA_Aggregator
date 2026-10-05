@@ -8,3 +8,6 @@ beautifulsoup4
 boto3
 pypdf
 python-docx
+pypdfium2
+pytesseract
+Pillow
