@@ -390,6 +390,33 @@ class SourceCooldownTests(unittest.TestCase):
 
         self.assertEqual([room["id"] for room in result], [1])
 
+    def test_bounded_source_selection_prefers_cross_agency_breadth(self):
+        rooms = [
+            {"id": 1, "agency_id": 10, "last_error_at": None},
+            {"id": 2, "agency_id": 10, "last_error_at": None},
+            {"id": 3, "agency_id": 20, "last_error_at": None},
+            {"id": 4, "agency_id": 30, "last_error_at": None},
+        ]
+        conn = Mock()
+
+        with (
+            patch(
+                "foia_archive.scraper_core.get_connection",
+                return_value=conn,
+            ),
+            patch(
+                "foia_archive.scraper_core.list_reading_rooms",
+                return_value=rooms,
+            ) as listing,
+        ):
+            result = get_reading_rooms_to_crawl(
+                self.config(cooldown=0),
+                limit=3,
+            )
+
+        self.assertEqual([room["id"] for room in result], [1, 3, 4])
+        listing.assert_called_once_with(conn, limit=None)
+
     def test_invalid_cooldown_config_uses_safe_default(self):
         now = datetime.now(timezone.utc)
         rooms = [
