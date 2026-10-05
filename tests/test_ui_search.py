@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi.testclient import TestClient
 from starlette.requests import Request
 
 from foia_archive.storage import (
@@ -265,6 +266,86 @@ class SearchPageTests(unittest.TestCase):
                 )
             )
         return response.body.decode("utf-8")
+
+    def test_browser_request_accepts_blank_all_agency_and_office_filters(self):
+        with patch("ui.server.get_db", side_effect=self.get_db):
+            client = TestClient(server.app)
+            response = client.get(
+                "/",
+                params={
+                    "q": "Todd Morley",
+                    "agency_id": "",
+                    "office_id": "",
+                    "file_type": "",
+                    "start_date": "",
+                    "end_date": "",
+                    "sort": "discovered_desc",
+                    "page_size": "50",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("0 results", response.text)
+        self.assertIn(
+            "No documents match the current search and filters.",
+            response.text,
+        )
+        self.assertIn('value="Todd Morley"', response.text)
+
+    def test_all_agencies_search_returns_matches_from_multiple_agencies(self):
+        conn = get_connection(self.db_path)
+        try:
+            second_agency_id = upsert_agency(
+                conn,
+                "second-agency",
+                "Second Agency",
+                {},
+            )
+            second_office_id = upsert_office(
+                conn,
+                "second-office",
+                "Second Office",
+                second_agency_id,
+                {},
+            )
+            second_room_id = upsert_reading_room(
+                conn,
+                "https://second.example.gov/reading-room/",
+                "Second Reading Room",
+                "office",
+                second_agency_id,
+                second_office_id,
+            )
+            insert_document(
+                conn,
+                url="https://second.example.gov/mongoose.pdf",
+                title="Mongoose Across Agencies",
+                file_type="pdf",
+                filename="mongoose.pdf",
+                agency_id=second_agency_id,
+                office_id=second_office_id,
+                reading_room_id=second_room_id,
+                discovered_at="2026-03-01T00:00:00",
+                published_date=None,
+            )
+        finally:
+            conn.close()
+
+        with patch("ui.server.get_db", side_effect=self.get_db):
+            client = TestClient(server.app)
+            response = client.get(
+                "/",
+                params={
+                    "q": "mongoose",
+                    "agency_id": "",
+                    "office_id": "",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("Showing 1–50 of 56 results", response.text)
+        self.assertIn("Page 1 of 2", response.text)
+        self.assertIn("Mongoose Across Agencies", response.text)
 
     def test_page_renders_counts_search_value_and_next_link(self):
         html = self.render(q="mongoose", page=1, page_size=25)
