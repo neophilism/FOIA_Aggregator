@@ -333,8 +333,8 @@
                         </td>
                         <td>
                             <div class="links">
-                                {% if doc.local_path %}
-                                    <a href="/files/{{ doc.local_path }}" target="_blank" rel="noopener">Download</a>
+                                {% if doc.storage_key or doc.local_path %}
+                                    <a href="/archive/{{ doc.id }}" target="_blank" rel="noopener">Download</a>
                                 {% endif %}
                                 {% if doc.url %}
                                     <a href="{{ doc.url }}" target="_blank" rel="noopener noreferrer">Source</a>
