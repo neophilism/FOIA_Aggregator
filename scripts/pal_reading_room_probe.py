@@ -90,6 +90,83 @@ def summarize(url: str) -> None:
                 )[:1200]
         print("CONTROL", payload)
 
+    cabinet_ids = [
+        element.get("lang")
+        for element in soup.find_all("input")
+        if element.get("lang") and "ChildClick" in (element.get("onclick") or "")
+    ]
+    if cabinet_ids:
+        if "efoia.cce.af.mil" in response.url:
+            selected_ids = ["5"] if "5" in cabinet_ids else cabinet_ids[:1]
+        else:
+            selected_ids = cabinet_ids
+
+        search_url = urljoin(response.url, "SearchDocs.aspx")
+        search_params = {
+            "doctypes": ",".join(selected_ids),
+            "filename": "*",
+            "sdate": "",
+            "edate": "",
+            "content": "",
+            "sortBy": "",
+            "sortOrder": "",
+            "custom": '{"customFields":[]}',
+            "pageIndex": "0",
+        }
+        search_response = session.post(
+            search_url,
+            data=search_params,
+            timeout=45,
+            headers={
+                "User-Agent": "FOIAArchiveBot/0.1 diagnostic",
+                "Referer": response.url,
+                "X-Requested-With": "XMLHttpRequest",
+            },
+        )
+        print("SEARCH_URL", search_url)
+        print("SEARCH_DOCTYPES", search_params["doctypes"])
+        print("SEARCH_STATUS", search_response.status_code)
+        print("SEARCH_LENGTH", len(search_response.content))
+        print("SEARCH_CONTENT_TYPE", search_response.headers.get("Content-Type"))
+        search_response.raise_for_status()
+
+        result_soup = BeautifulSoup(search_response.text, "html.parser")
+        page_index = result_soup.find(id="pageIndexOption")
+        if page_index is not None:
+            print(
+                "PAGE_INDEX_OPTIONS",
+                [
+                    {
+                        "value": option.get("value"),
+                        "text": " ".join(option.stripped_strings),
+                        "selected": option.has_attr("selected"),
+                    }
+                    for option in page_index.find_all("option")
+                ][:30],
+            )
+        for link in result_soup.find_all("a", href=True)[:60]:
+            print(
+                "RESULT_LINK",
+                {
+                    "href": urljoin(search_url, link.get("href")),
+                    "text": " ".join(link.stripped_strings)[:300],
+                    "title": link.get("title"),
+                    "onclick": (link.get("onclick") or "")[:500],
+                },
+            )
+        for element in result_soup.find_all(["input", "button"]):
+            onclick = element.get("onclick") or ""
+            if any(token in onclick.lower() for token in ("download", "attach", "document", "view")):
+                print(
+                    "RESULT_ACTION",
+                    {
+                        "tag": element.name,
+                        "id": element.get("id"),
+                        "value": element.get("value"),
+                        "onclick": onclick[:700],
+                    },
+                )
+
     for script in soup.find_all("script"):
         src = script.get("src")
         if src:
