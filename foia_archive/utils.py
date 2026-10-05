@@ -57,6 +57,21 @@ def load_config(path: str, overrides: Optional[Dict[str, Any]] = None) -> Config
     if env_storage_backend:
         storage["backend"] = env_storage_backend
 
+    crawler = data.setdefault("crawler", {})
+    if not isinstance(crawler, dict):
+        crawler = {}
+        data["crawler"] = crawler
+
+    env_dry_run = (os.getenv("FOIA_CRAWLER_DRY_RUN") or "").strip()
+    env_max_docs = (os.getenv("FOIA_MAX_DOCS_PER_SOURCE") or "").strip()
+    env_interval = (os.getenv("FOIA_CRAWLER_INTERVAL_HOURS") or "").strip()
+    if env_dry_run:
+        crawler["dry_run"] = parse_bool(env_dry_run)
+    if env_max_docs:
+        crawler["max_docs_per_source"] = max(0, int(env_max_docs))
+    if env_interval:
+        crawler["interval_hours"] = float(env_interval)
+
     overrides = overrides or {}
     for section, values in overrides.items():
         if values is None:
