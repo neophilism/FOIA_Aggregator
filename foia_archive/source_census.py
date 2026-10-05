@@ -274,7 +274,14 @@ def build_component_census(
         )
 
     ic_elements = normalized_ic_elements()
+    agency_names_present = {
+        row["agency_name"]
+        for row in component_rows
+        if row.get("agency_name")
+    }
     for element in ic_elements:
+        if element["parent_agency"] not in agency_names_present:
+            continue
         for source in element["sources"]:
             url = source["url"]
             if url in unique_source_urls:
