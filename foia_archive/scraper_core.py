@@ -491,9 +491,21 @@ def _document_type_from_response(response, url: str) -> Optional[str]:
 
 
 def _filename_hint(url: str, title: str, file_type: str) -> str:
-    name = urlparse(url).path.rsplit("/", 1)[-1] or clean_filename(title) or "document"
-    if "." not in name and file_type:
-        name = f"{name}.{file_type}"
+    name = urlparse(url).path.rsplit("/", 1)[-1] or ""
+    extension = (
+        name.rsplit(".", 1)[-1].lower()
+        if "." in name
+        else ""
+    )
+    if file_type and extension not in ALLOWED_EXTENSIONS:
+        name = clean_filename(title) or "document"
+        expected_suffix = f".{file_type.lower()}"
+        if not name.lower().endswith(expected_suffix):
+            name = f"{name}{expected_suffix}"
+    elif not name:
+        name = clean_filename(title) or "document"
+        if file_type:
+            name = f"{name}.{file_type}"
     return clean_filename(name)
 
 
