@@ -30,6 +30,8 @@ downloader:
   max_retries: 3
   retry_backoff_seconds: 1
   max_retry_delay_seconds: 60
+  download_failure_retry_minutes: 60
+  permanent_download_failure_retry_minutes: 1440
 
 storage:
   db_path: "data/foia_archive.db"
