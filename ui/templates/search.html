@@ -207,14 +207,14 @@
     <form method="get" action="/">
         <div class="search-row">
             <div class="search-field">
-                <label for="q">Title / filename search</label>
+                <label for="q">Full-text search</label>
                 <input
                     type="search"
                     id="q"
                     name="q"
                     value="{{ title_query }}"
                     maxlength="200"
-                    placeholder="Search document titles or filenames across all agencies"
+                    placeholder="Search titles, filenames, and extracted document text across all agencies"
                 >
             </div>
             <button type="submit">Search</button>
