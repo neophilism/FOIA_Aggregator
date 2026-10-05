@@ -252,6 +252,44 @@ def write_source_csv(census: dict, path: Path) -> None:
             )
 
 
+def write_ic_csv(census: dict, path: Path) -> None:
+    with path.open("w", newline="", encoding="utf-8") as handle:
+        writer = csv.DictWriter(
+            handle,
+            fieldnames=[
+                "element",
+                "parent_agency",
+                "coverage_status",
+                "source_mode",
+                "source_url",
+                "probe_category",
+                "status_code",
+                "final_url",
+                "probe_error",
+            ],
+        )
+        writer.writeheader()
+        for element in census.get("intelligence_community", []):
+            for source in element.get("sources", []):
+                probe = source.get("probe") or {}
+                writer.writerow(
+                    {
+                        "element": element["name"],
+                        "parent_agency": element["parent_agency"],
+                        "coverage_status": element.get(
+                            "coverage_status",
+                            "unprobed",
+                        ),
+                        "source_mode": source["mode"],
+                        "source_url": source["url"],
+                        "probe_category": probe.get("category", ""),
+                        "status_code": probe.get("status_code", ""),
+                        "final_url": probe.get("final_url", ""),
+                        "probe_error": probe.get("error", ""),
+                    }
+                )
+
+
 def _markdown_table(rows: list[list[str]], headers: list[str]) -> list[str]:
     result = [
         "| " + " | ".join(headers) + " |",
@@ -424,6 +462,54 @@ def write_markdown(census: dict, path: Path) -> None:
                     ["Agency", "Observed source categories"],
                 )
             )
+
+    ic_summary = census.get("ic_summary") or {}
+    ic_rows = census.get("intelligence_community") or []
+    if ic_rows:
+        lines.extend(
+            [
+                "",
+                "## Intelligence Community element coverage",
+                "",
+                f"- IC elements tracked: **{len(ic_rows)}**",
+                f"- Elements with identified public sources: **{sum(1 for row in ic_rows if row.get('sources'))}**",
+            ]
+        )
+        if ic_summary:
+            lines.extend(
+                [
+                    f"- Elements with ≥1 reachable source from this runner: **{ic_summary.get('reachable_elements', 0)}**",
+                    f"- Elements with sources but none reachable from this runner: **{ic_summary.get('known_unreachable_elements', 0)}**",
+                ]
+            )
+
+        table_rows = []
+        for element in ic_rows:
+            source_text = "; ".join(
+                f"{source['mode']}: {source['url']}"
+                for source in element.get("sources", [])
+            )
+            table_rows.append(
+                [
+                    element["name"],
+                    element["parent_agency"],
+                    element.get("coverage_status", "unprobed"),
+                    ", ".join(element.get("probe_categories", [])),
+                    source_text,
+                ]
+            )
+        lines.extend(
+            _markdown_table(
+                table_rows,
+                [
+                    "IC element",
+                    "Parent agency",
+                    "Coverage",
+                    "Probe categories",
+                    "Public source(s)",
+                ],
+            )
+        )
 
     no_source_candidates = [
         row
@@ -696,6 +782,10 @@ def main() -> int:
     write_source_csv(
         census,
         output_dir / "source-probes.csv",
+    )
+    write_ic_csv(
+        census,
+        output_dir / "ic-source-coverage.csv",
     )
     write_markdown(
         census,
