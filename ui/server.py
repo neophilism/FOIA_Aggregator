@@ -19,6 +19,7 @@ from foia_archive.storage import (
     get_connection,
     get_document_detail,
     get_document_source_details,
+    get_schema_version,
     init_db,
     query_document_snippets,
     query_documents_page,
@@ -125,6 +126,25 @@ def _page_url(
     return "/?" + urlencode(
         {key: value for key, value in params.items() if value not in (None, "")}
     )
+
+
+@app.get("/healthz")
+async def healthz():
+    conn = get_db()
+    try:
+        conn.execute("SELECT 1").fetchone()
+        schema_version = get_schema_version(conn)
+    except sqlite3.Error as exc:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Database unavailable: {exc}",
+        ) from exc
+    finally:
+        conn.close()
+    return {
+        "status": "ok",
+        "schema_version": schema_version,
+    }
 
 
 @app.get("/about", response_class=HTMLResponse)
