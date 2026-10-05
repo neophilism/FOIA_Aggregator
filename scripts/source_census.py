@@ -161,6 +161,7 @@ def write_component_csv(census: dict, path: Path) -> None:
                 "component_name",
                 "component_id",
                 "recognized_source_count",
+                "coverage_status",
                 "recognized_sources",
                 "candidate_ignored_urls",
                 "ignored_url_count",
@@ -176,6 +177,7 @@ def write_component_csv(census: dict, path: Path) -> None:
                     "component_name": row["component_name"],
                     "component_id": row["component_id"],
                     "recognized_source_count": row["recognized_source_count"],
+                    "coverage_status": row.get("coverage_status", ""),
                     "recognized_sources": " | ".join(
                         f'{item["source_type"]}:{item["url"]}'
                         for item in row["recognized_sources"]
@@ -447,7 +449,7 @@ def write_markdown(census: dict, path: Path) -> None:
         [
             row["agency_name"],
             row["component_name"],
-            "historical" if row.get("historical_note") else "current gap",
+            row.get("coverage_status", "uncovered"),
             str(len(row["ignored_urls"])),
         ]
         for row in zero_source
