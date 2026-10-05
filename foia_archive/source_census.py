@@ -250,11 +250,19 @@ def build_component_census(
         for row in component_rows
         if row["agency_id"]
     }
+    agency_ids_with_source = {
+        row["agency_id"]
+        for row in component_rows
+        if row["agency_id"] and row["recognized_source_count"] > 0
+    }
+    agency_ids_without_source = agency_ids - agency_ids_with_source
 
     return {
         "summary": {
             "agencies_returned": len(agencies),
             "agencies_referenced_by_components": len(agency_ids),
+            "agencies_with_recognized_source": len(agency_ids_with_source),
+            "agencies_without_recognized_source": len(agency_ids_without_source),
             "components": len(components),
             "components_with_recognized_source": components_with_source,
             "components_without_recognized_source": components_without_source,
