@@ -1,10 +1,13 @@
 name: Intelligence Community source audit
 
 on:
-  push:
-    branches:
-      - feat/source-census
   workflow_dispatch:
+  schedule:
+    - cron: "47 6 * * 0"
+
+concurrency:
+  group: ic-source-audit-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   audit:
