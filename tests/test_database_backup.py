@@ -10,6 +10,7 @@ from unittest.mock import patch
 from foia_archive.archive_storage import ArchiveStorageError, B2ArchiveStorage
 from foia_archive.database_backup import (
     backup_database_to_b2,
+    bootstrap_database_from_b2,
     database_backup_due,
     restore_database_from_b2,
 )
@@ -289,6 +290,63 @@ class DatabaseBackupTests(unittest.TestCase):
         finally:
             conn.close()
         self.assertEqual(value, "newer")
+
+    def test_bootstrap_restores_newest_backup_when_live_db_is_absent(self):
+        now = datetime(2026, 10, 5, 16, 0, tzinfo=timezone.utc)
+        with self._patch_backend():
+            self.client.now = now
+            backup = backup_database_to_b2(
+                self.config,
+                force=True,
+                now=now,
+            )
+
+        self.db_path.unlink()
+        self.assertFalse(self.db_path.exists())
+
+        with self._patch_backend():
+            restored = bootstrap_database_from_b2(self.config)
+
+        self.assertEqual(restored, self.db_path)
+        self.assertTrue(self.db_path.exists())
+        conn = sqlite3.connect(self.db_path)
+        try:
+            value = conn.execute("SELECT value FROM sample").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(value, "preserved")
+        self.assertEqual(
+            backup.key,
+            next(
+                key
+                for bucket, key in self.client.objects
+                if bucket == "foia-test"
+                and key.startswith("database-backups/")
+            ),
+        )
+
+    def test_bootstrap_never_overwrites_existing_live_database(self):
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute("UPDATE sample SET value = 'live'")
+            conn.commit()
+        finally:
+            conn.close()
+
+        with patch(
+            "foia_archive.database_backup.list_database_backups"
+        ) as listing:
+            restored = bootstrap_database_from_b2(self.config)
+
+        self.assertIsNone(restored)
+        listing.assert_not_called()
+
+        conn = sqlite3.connect(self.db_path)
+        try:
+            value = conn.execute("SELECT value FROM sample").fetchone()[0]
+        finally:
+            conn.close()
+        self.assertEqual(value, "live")
 
     def test_restore_rejects_sha256_mismatch(self):
         now = datetime(2026, 10, 5, 16, 0, tzinfo=timezone.utc)
