@@ -26,7 +26,7 @@ class SourceReplacementTests(unittest.TestCase):
             "https://osc.gov/Pages/FOIA-Resources.aspx":
                 "https://www.osc.gov/about/foia/",
             "https://www.restorethegulf.gov/resources/council-documents-foia-library":
-                "https://www.restorethegulf.gov/resources/reports-plans",
+                "https://www.restorethegulf.gov/reports/",
             "https://www.whitehouse.gov/ipec/legal/":
                 "https://www.whitehouse.gov/ipec",
         }
