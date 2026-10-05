@@ -123,6 +123,36 @@ class DeploymentConfigTests(unittest.TestCase):
         self.assertEqual(config.storage["backend"], "local")
 
 
+class RenderBlueprintTests(unittest.TestCase):
+    def test_free_render_blueprint_uses_b2_bootstrap_without_committed_secrets(self):
+        blueprint = yaml.safe_load(
+            Path("render.yaml").read_text(encoding="utf-8")
+        )
+        services = blueprint.get("services") or []
+        self.assertEqual(len(services), 1)
+
+        service = services[0]
+        self.assertEqual(service["type"], "web")
+        self.assertEqual(service["runtime"], "docker")
+        self.assertEqual(service["plan"], "free")
+        self.assertEqual(service["healthCheckPath"], "/healthz")
+
+        env = {
+            item["key"]: item
+            for item in service.get("envVars") or []
+            if "key" in item
+        }
+        self.assertEqual(env["FOIA_STORAGE_BACKEND"]["value"], "b2")
+        self.assertEqual(
+            env["FOIA_BOOTSTRAP_DB_FROM_B2"]["value"],
+            "true",
+        )
+        self.assertFalse(env["B2_KEY_ID"]["sync"])
+        self.assertFalse(env["B2_APPLICATION_KEY"]["sync"])
+        self.assertNotIn("value", env["B2_KEY_ID"])
+        self.assertNotIn("value", env["B2_APPLICATION_KEY"])
+
+
 class HealthEndpointTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
