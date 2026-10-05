@@ -26,6 +26,7 @@ jobs:
       B2_REGION: ${{ inputs.region }}
       B2_ENDPOINT_URL: ${{ inputs.endpoint_url }}
       B2_BUCKET: ${{ inputs.bucket_name }}
+      PYTHONPATH: .
 
     steps:
       - uses: actions/checkout@v4
