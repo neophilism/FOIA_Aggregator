@@ -12,7 +12,13 @@ from foia_archive.scraper_core import (
     extract_crawl_targets,
     extract_document_links,
 )
-from foia_archive.storage import get_connection, init_db, upsert_reading_room
+from foia_archive.storage import (
+    get_connection,
+    init_db,
+    insert_document,
+    update_download_metadata,
+    upsert_reading_room,
+)
 from foia_archive.utils import Config
 
 
@@ -343,6 +349,88 @@ class BoundedReadingRoomCrawlerTests(unittest.TestCase):
             )
 
         self.assertEqual(self._documents(), {})
+
+    def test_live_crawl_enforces_per_source_document_limit(self):
+        root_html = """
+        <a href="one.pdf">One</a>
+        <a href="two.pdf">Two</a>
+        <a href="three.pdf">Three</a>
+        """
+        with (
+            patch(
+                "foia_archive.scraper_core.requests.get",
+                return_value=FakeResponse(
+                    root_html,
+                    headers={"Content-Type": "text/html"},
+                ),
+            ),
+            patch(
+                "foia_archive.scraper_core._process_document_candidate",
+                return_value=True,
+            ) as process,
+        ):
+            crawl_reading_room(
+                self.rr_id,
+                self.config,
+                dry_run=False,
+                max_docs=2,
+            )
+
+        self.assertEqual(process.call_count, 2)
+
+    def test_archived_records_do_not_consume_live_source_quota(self):
+        conn = get_connection(self.db_path)
+        try:
+            document_id = insert_document(
+                conn,
+                url="https://example.gov/reading-room/one.pdf",
+                title="One",
+                file_type="pdf",
+                filename="one.pdf",
+                agency_id=None,
+                office_id=None,
+                reading_room_id=self.rr_id,
+                discovered_at="2026-10-05T00:00:00",
+            )
+            update_download_metadata(
+                conn,
+                document_id,
+                "stored/one.pdf",
+                "2026-10-05T00:01:00",
+                storage_backend="local",
+                storage_key="stored/one.pdf",
+            )
+        finally:
+            conn.close()
+
+        root_html = """
+        <a href="one.pdf">One</a>
+        <a href="two.pdf">Two</a>
+        <a href="three.pdf">Three</a>
+        """
+        with (
+            patch(
+                "foia_archive.scraper_core.requests.get",
+                return_value=FakeResponse(
+                    root_html,
+                    headers={"Content-Type": "text/html"},
+                ),
+            ),
+            patch(
+                "foia_archive.scraper_core._process_document_candidate",
+                return_value=False,
+            ) as process,
+        ):
+            crawl_reading_room(
+                self.rr_id,
+                self.config,
+                dry_run=False,
+                max_docs=2,
+            )
+
+        # The archived first record is inspected without consuming quota, so
+        # the two not-yet-archived records are still allowed through.
+        self.assertEqual(process.call_count, 3)
 
     def test_document_safety_limit_caps_unique_candidates(self):
         config = Config(
