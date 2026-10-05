@@ -14,7 +14,7 @@ from .archive_storage import (
     get_archive_storage,
 )
 from .storage import get_connection, init_db, upsert_document_text
-from .text_extraction import extract_document_text
+from .text_extraction import OCRSettings, extract_document_text
 from .utils import Config, logger
 
 
@@ -130,6 +130,7 @@ def reindex_downloaded_documents(
                         source,
                         row["file_type"],
                         max_chars=max_chars,
+                        ocr=OCRSettings.from_mapping(config.data.get("ocr")),
                     )
                     now = datetime.now(timezone.utc).isoformat()
                     upsert_document_text(
@@ -138,6 +139,7 @@ def reindex_downloaded_documents(
                         body=extraction.text,
                         extraction_status=extraction.status,
                         extraction_error=extraction.error,
+                        extraction_method=extraction.method,
                         extracted_at=now,
                         character_count=extraction.character_count,
                         truncated=extraction.truncated,
