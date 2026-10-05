@@ -497,7 +497,7 @@ def _filename_hint(url: str, title: str, file_type: str) -> str:
         if "." in name
         else ""
     )
-    if file_type and extension not in ALLOWED_EXTENSIONS:
+    if file_type and extension and extension not in ALLOWED_EXTENSIONS:
         name = clean_filename(title) or "document"
         expected_suffix = f".{file_type.lower()}"
         if not name.lower().endswith(expected_suffix):
@@ -506,6 +506,8 @@ def _filename_hint(url: str, title: str, file_type: str) -> str:
         name = clean_filename(title) or "document"
         if file_type:
             name = f"{name}.{file_type}"
+    elif "." not in name and file_type:
+        name = f"{name}.{file_type}"
     return clean_filename(name)
 
 
