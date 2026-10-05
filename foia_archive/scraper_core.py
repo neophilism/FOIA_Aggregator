@@ -1137,6 +1137,38 @@ def _download_retry_due(
     return age_minutes >= cooldown_minutes
 
 
+def _candidate_counts_toward_source_limit(
+    conn,
+    url: str,
+    *,
+    dry_run: bool,
+) -> bool:
+    """Return whether a candidate should consume the per-source document quota.
+
+    New records always count. In live mode, previously discovered records also
+    count when they are not yet successfully archived. Already archived records
+    do not consume quota, allowing bounded repeated crawl cycles to keep making
+    progress instead of getting stuck on the same completed records.
+    """
+    canonical = canonicalize_url(url)
+    if not canonical:
+        return False
+
+    existing = get_document_by_url(conn, canonical)
+    if existing is None:
+        return True
+    if dry_run:
+        return False
+
+    has_archive_location = bool(
+        existing["storage_key"] or existing["local_path"]
+    )
+    return (
+        existing["download_status"] != "downloaded"
+        or not has_archive_location
+    )
+
+
 def _process_document_candidate(
     conn,
     rr,
@@ -1388,6 +1420,7 @@ def _crawl_pal_reading_room(
     session = requests.Session()
     seen_documents: Set[str] = set()
     new_documents = 0
+    limited_documents = 0
     try:
         root_response = None
         try:
@@ -1462,8 +1495,20 @@ def _crawl_pal_reading_room(
                         datetime.utcnow().isoformat(),
                     )
                     return
-                if dry_run and max_docs is not None and new_documents >= max_docs:
-                    logger.info("Dry run document limit reached for %s", root_url)
+                consumes_quota = _candidate_counts_toward_source_limit(
+                    conn,
+                    candidate_url,
+                    dry_run=dry_run,
+                )
+                if (
+                    max_docs is not None
+                    and consumes_quota
+                    and limited_documents >= max(0, int(max_docs))
+                ):
+                    logger.info(
+                        "Per-source document limit reached for %s",
+                        root_url,
+                    )
                     record_reading_room_crawl_success(
                         conn,
                         rr["id"],
@@ -1485,6 +1530,8 @@ def _crawl_pal_reading_room(
                 )
                 if is_new:
                     new_documents += 1
+                if consumes_quota:
+                    limited_documents += 1
 
             page_index += 1
 
@@ -1585,6 +1632,7 @@ def _crawl_reading_room_with_connection(
     scope: Optional[CrawlScope] = None
     pages_fetched = 0
     new_documents = 0
+    limited_documents = 0
     stop_for_document_limit = False
 
     while frontier and pages_fetched < max_pages and not stop_for_document_limit:
@@ -1615,8 +1663,20 @@ def _crawl_reading_room_with_connection(
             file_type = _document_type_from_response(response, final_url)
             if file_type:
                 if final_url not in seen_documents:
-                    if dry_run and max_docs is not None and new_documents >= max_docs:
-                        logger.info("Dry run document limit reached for %s", rr["url"])
+                    consumes_quota = _candidate_counts_toward_source_limit(
+                        conn,
+                        final_url,
+                        dry_run=dry_run,
+                    )
+                    if (
+                        max_docs is not None
+                        and consumes_quota
+                        and limited_documents >= max(0, int(max_docs))
+                    ):
+                        logger.info(
+                            "Per-source document limit reached for %s",
+                            rr["url"],
+                        )
                         break
                     if len(seen_documents) >= max_discovered_docs:
                         stop_for_document_limit = True
@@ -1635,8 +1695,16 @@ def _crawl_reading_room_with_connection(
                     )
                     if is_new:
                         new_documents += 1
-                if dry_run and max_docs is not None and new_documents >= max_docs:
-                    logger.info("Dry run document limit reached for %s", rr["url"])
+                    if consumes_quota:
+                        limited_documents += 1
+                if (
+                    max_docs is not None
+                    and limited_documents >= max(0, int(max_docs))
+                ):
+                    logger.info(
+                        "Per-source document limit reached for %s",
+                        rr["url"],
+                    )
                     break
                 continue
 
@@ -1672,8 +1740,20 @@ def _crawl_reading_room_with_connection(
             url = link["url"]
             if url in seen_documents:
                 continue
-            if dry_run and max_docs is not None and new_documents >= max_docs:
-                logger.info("Dry run document limit reached for %s", rr["url"])
+            consumes_quota = _candidate_counts_toward_source_limit(
+                conn,
+                url,
+                dry_run=dry_run,
+            )
+            if (
+                max_docs is not None
+                and consumes_quota
+                and limited_documents >= max(0, int(max_docs))
+            ):
+                logger.info(
+                    "Per-source document limit reached for %s",
+                    rr["url"],
+                )
                 stop_for_document_limit = True
                 break
             if len(seen_documents) >= max_discovered_docs:
@@ -1694,8 +1774,16 @@ def _crawl_reading_room_with_connection(
             )
             if is_new:
                 new_documents += 1
-            if dry_run and max_docs is not None and new_documents >= max_docs:
-                logger.info("Dry run document limit reached for %s", rr["url"])
+            if consumes_quota:
+                limited_documents += 1
+            if (
+                max_docs is not None
+                and limited_documents >= max(0, int(max_docs))
+            ):
+                logger.info(
+                    "Per-source document limit reached for %s",
+                    rr["url"],
+                )
                 stop_for_document_limit = True
                 break
 
