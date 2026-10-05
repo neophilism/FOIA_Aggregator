@@ -27,7 +27,14 @@ def run_once(
     init_db(cfg.storage.get("db_path"), cfg.storage.get("files_dir"))
 
     logger.info("Refreshing metadata from FOIA Hub")
-    refresh_metadata(cfg)
+    try:
+        refresh_metadata(cfg)
+    except Exception as exc:  # metadata outage must not suppress known sources
+        logger.warning(
+            "FOIA.gov metadata refresh failed after retries; continuing with the last known active source set: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
 
     rooms = get_reading_rooms_to_crawl(cfg)
     logger.info("Crawling %s reading rooms", len(rooms))
@@ -38,10 +45,17 @@ def run_once(
         float(cfg.crawler.get("per_host_delay_seconds", 0))
     )
     for rr in rooms:
-        crawl_reading_room(
-            rr["id"],
-            cfg,
-            dry_run=dry_run_flag,
-            max_docs=max_docs,
-            rate_limiter=rate_limiter,
-        )
+        try:
+            crawl_reading_room(
+                rr["id"],
+                cfg,
+                dry_run=dry_run_flag,
+                max_docs=max_docs,
+                rate_limiter=rate_limiter,
+            )
+        except Exception as exc:
+            logger.exception(
+                "Unexpected crawl failure for reading room %s; continuing with remaining sources: %s",
+                rr["id"],
+                exc,
+            )
