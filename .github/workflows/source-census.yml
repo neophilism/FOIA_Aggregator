@@ -28,32 +28,10 @@ jobs:
           if [ -n "$REPO_FOIA_API_KEY" ]; then
             echo "::add-mask::$REPO_FOIA_API_KEY"
             echo "FOIA_API_KEY=$REPO_FOIA_API_KEY" >> "$GITHUB_ENV"
-            exit 0
+          else
+            # api.data.gov's public, rate-limited testing credential.
+            echo "FOIA_API_KEY=DEMO_KEY" >> "$GITHUB_ENV"
           fi
-
-          python - <<'PY'
-          import os
-          import re
-          import requests
-          from bs4 import BeautifulSoup
-
-          url = "https://stg-www.foia.gov/swagger.html"
-          response = requests.get(url, timeout=30)
-          response.raise_for_status()
-          text = BeautifulSoup(response.text, "html.parser").get_text(" ", strip=True)
-          match = re.search(
-              r"use\s+the\s+following\s+api[_ -]?key\s+for\s+testing\.?\s*([A-Za-z0-9_-]{20,})",
-              text,
-              flags=re.IGNORECASE,
-          )
-          if not match:
-              raise SystemExit("Could not recover FOIA.gov's published testing API key.")
-
-          api_key = match.group(1)
-          print(f"::add-mask::{api_key}")
-          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
-              env_file.write(f"FOIA_API_KEY={api_key}\n")
-          PY
 
       - name: Run complete source census
         run: >
