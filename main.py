@@ -1,8 +1,12 @@
 import typer
 
+from foia_archive.database_backup import (
+    backup_database_to_b2,
+    restore_database_from_b2,
+)
 from foia_archive.engine import run_once
 from foia_archive.scheduler import run_forever
-from foia_archive.utils import parse_bool
+from foia_archive.utils import load_config, parse_bool
 
 app = typer.Typer(help="FOIA Archive CLI")
 
@@ -29,6 +33,59 @@ def run(
         dry_run=dry_run_flag,
         max_docs_per_source=max_docs_per_source,
     )
+
+
+@app.command("backup-db")
+def backup_db(
+    config: str = "config/settings.yaml",
+    force: bool = typer.Option(
+        False,
+        "--force",
+        help="Create a backup even when the normal backup interval has not elapsed.",
+    ),
+):
+    """Create a consistent compressed SQLite backup in configured B2 storage."""
+    cfg = load_config(config)
+    result = backup_database_to_b2(cfg, force=force)
+    if result is None:
+        typer.echo(
+            "No backup created (B2 storage is not selected, backups are disabled, "
+            "or the configured interval has not elapsed)."
+        )
+        return
+    typer.echo(
+        f"Uploaded {result.key} ({result.compressed_bytes} bytes)"
+    )
+
+
+@app.command("restore-db")
+def restore_db(
+    config: str = "config/settings.yaml",
+    key: str | None = typer.Option(
+        None,
+        "--key",
+        help="Specific B2 backup object key. Defaults to the newest backup.",
+    ),
+    destination: str | None = typer.Option(
+        None,
+        "--destination",
+        help="Recovery database path. Defaults beside the live DB as *.restored.db.",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Allow replacing an existing recovery destination.",
+    ),
+):
+    """Restore and verify a B2 backup into a separate recovery database."""
+    cfg = load_config(config)
+    restored = restore_database_from_b2(
+        cfg,
+        key=key,
+        destination_path=destination,
+        overwrite=overwrite,
+    )
+    typer.echo(f"Restored verified database to {restored}")
 
 
 @app.command()

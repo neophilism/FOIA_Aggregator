@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import sqlite3
 from typing import Optional
 
+from .database_backup import backup_database_to_b2
 from .discovery import refresh_metadata
 from .scraper_core import (
     HostRateLimiter,
@@ -120,5 +121,15 @@ def run_once(
                 exc,
             )
             _record_unexpected_source_failure(cfg, rr["id"], exc)
+
+    try:
+        backup_database_to_b2(cfg)
+    except Exception as exc:
+        logger.warning(
+            "SQLite backup failed; crawl cycle remains successful and the "
+            "next eligible cycle will retry: %s: %s",
+            type(exc).__name__,
+            exc,
+        )
 
     return metadata_ok

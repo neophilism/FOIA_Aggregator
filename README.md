@@ -103,6 +103,42 @@ The initial configuration sets `storage.b2.max_archive_bytes` to **9,000,000,000
 
 The SQLite database stores `storage_backend` and `storage_key` for each archived document. Existing local archive rows are automatically backfilled during schema migration. The web UI uses `/archive/{document_id}` for downloads: local records are served from the local archive and private B2 records receive a short-lived signed download URL.
 
+### SQLite backups and recovery
+
+When B2 storage is selected, the crawler also protects the metadata database with consistent compressed snapshots. The default policy is:
+- create a backup at most once every 24 hours
+- retain the newest 3 backups
+- store them under `database-backups/`
+- use SQLite's online backup API so WAL-mode writes do not produce an inconsistent copied database
+- run SQLite `quick_check` before upload
+- gzip the snapshot
+- attach the uncompressed SQLite SHA-256 to B2 object metadata
+- verify the uploaded object size before considering the backup successful
+
+Backup failure does not terminate a successful crawl cycle; the next eligible cycle retries. If retention pruning fails after a successful upload, the new backup is preserved and the pruning failure is logged.
+
+Create a backup manually:
+
+```bash
+python main.py backup-db --force
+```
+
+Restore the newest backup into a separate recovery database:
+
+```bash
+python main.py restore-db
+```
+
+By default this creates `data/foia_archive.restored.db` rather than replacing the live database. A specific backup or destination can be selected explicitly:
+
+```bash
+python main.py restore-db \
+  --key database-backups/<backup>.sqlite.gz \
+  --destination data/recovered.db
+```
+
+A restore verifies the B2 object metadata SHA-256 after decompression and then runs SQLite `quick_check` before making the recovery file available. Retention pruning requires permission to delete old objects; if the scoped key cannot delete, backup creation still succeeds and pruning is logged as a warning.
+
 ## Continuous-operation resilience
 
 The `daemon` command is designed to stay alive across ordinary application and network failures.
