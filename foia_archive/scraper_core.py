@@ -315,10 +315,16 @@ def get_reading_rooms_to_crawl(config: Config, limit: Optional[int] = None):
     finally:
         conn.close()
 
-    cooldown_minutes = max(
-        0.0,
-        float(config.crawler.get("failed_source_retry_minutes", 60)),
-    )
+    try:
+        cooldown_minutes = max(
+            0.0,
+            float(config.crawler.get("failed_source_retry_minutes", 60)),
+        )
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid failed_source_retry_minutes; using 60-minute cooldown"
+        )
+        cooldown_minutes = 60.0
     if cooldown_minutes <= 0:
         return rooms
 
