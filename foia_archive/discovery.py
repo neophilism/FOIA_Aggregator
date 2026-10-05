@@ -467,6 +467,7 @@ def refresh_metadata(config: Config) -> None:
     agency_cache: Dict[str, int] = {}
     agency_lookup: Dict[str, Dict] = {a.get("id"): a for a in agencies + included_agencies}
     seen_source_count = 0
+    automatic_metadata_source_count = 0
     seen_source_urls: set[str] = set()
 
     # Persist agencies up front so component handling can link to them reliably.
@@ -503,6 +504,7 @@ def refresh_metadata(config: Config) -> None:
         # crawl targets. Request forms, agency homepages, and generic links are
         # intentionally not guessed into the reading-room set.
         sources = extract_reading_room_sources(attrs)
+        automatic_metadata_source_count += len(sources)
         if not sources:
             sources = [
                 {
@@ -578,7 +580,7 @@ def refresh_metadata(config: Config) -> None:
         logger.warning(
             "FOIA metadata refresh returned zero components; preserving the existing active source set"
         )
-    elif seen_source_count == 0:
+    elif automatic_metadata_source_count == 0:
         logger.warning(
             "FOIA metadata refresh returned components but no recognized publication-source fields; preserving the existing active source set"
         )
