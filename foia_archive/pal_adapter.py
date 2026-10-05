@@ -59,6 +59,20 @@ def search_url(reading_room_url: str) -> str:
     return urljoin(reading_room_url, "SearchDocs.aspx")
 
 
+def folder_view_url(
+    reading_room_url: str,
+    folder: PalFolder,
+) -> str:
+    """Return the PAL folder page used by the public reading-room UI."""
+    return urljoin(
+        reading_room_url,
+        (
+            "AddAttachment.aspx?"
+            f"docid={folder.document_id}&ispaldoc={folder.document_kind}"
+        ),
+    )
+
+
 def cabinet_ids_from_page(html: str) -> tuple[str, ...]:
     """Return PAL cabinet IDs in page order without duplicates."""
     soup = BeautifulSoup(html, "html.parser")
