@@ -366,7 +366,24 @@ class SourceProbeTests(unittest.TestCase):
         census = {
             "summary": {},
             "components": [],
-            "source_instances": [],
+            "source_instances": [
+                {
+                    "agency_id": "one",
+                    "agency_name": "Agency One",
+                    "component_id": "one",
+                    "component_name": "One",
+                    "source_type": "reading_room",
+                    "url": "https://one.gov/",
+                },
+                {
+                    "agency_id": "two",
+                    "agency_name": "Agency Two",
+                    "component_id": "two",
+                    "component_name": "Two",
+                    "source_type": "reading_room",
+                    "url": "https://two.gov/",
+                },
+            ],
             "ignored_url_field_counts": {},
             "candidate_ignored_field_counts": {},
         }
@@ -400,6 +417,22 @@ class SourceProbeTests(unittest.TestCase):
         self.assertEqual(
             enriched["probe_summary"]["category_counts"],
             {"blocked": 1, "document_producing": 1},
+        )
+        self.assertEqual(
+            enriched["probe_summary"]["agencies_with_reachable_source"],
+            1,
+        )
+        self.assertEqual(
+            enriched["probe_summary"]["agencies_without_reachable_source"],
+            1,
+        )
+        self.assertEqual(
+            enriched["probe_summary"]["agencies_without_reachable_source_names"],
+            ["Agency Two"],
+        )
+        self.assertEqual(
+            enriched["probe_summary"]["agency_problem_categories"],
+            {"Agency Two": ["blocked"]},
         )
 
 
