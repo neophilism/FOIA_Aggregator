@@ -1,6 +1,7 @@
 import unittest
 from unittest.mock import patch
 
+from foia_archive.scraper_core import FileTooLarge
 from foia_archive.source_census import (
     ProbeResult,
     attach_probe_results,
@@ -53,7 +54,7 @@ class SourceCensusCoverageTests(unittest.TestCase):
                 "id": "component-2",
                 "attributes": {
                     "title": "Likely Classifier Gap",
-                    "website": "https://agency.gov/foia/library",
+                    "resources": "https://agency.gov/records/foia-archive",
                 },
                 "relationships": {
                     "agency": {"data": {"id": "agency-1"}}
@@ -103,8 +104,8 @@ class SourceCensusCoverageTests(unittest.TestCase):
             gap["candidate_ignored_urls"],
             [
                 {
-                    "field_path": "website",
-                    "url": "https://agency.gov/foia/library",
+                    "field_path": "resources",
+                    "url": "https://agency.gov/records/foia-archive",
                 }
             ],
         )
@@ -186,6 +187,29 @@ class SourceProbeTests(unittest.TestCase):
 
         self.assertEqual(result.category, "blocked")
         self.assertEqual(result.status_code, 403)
+
+    def test_oversized_probe_page_is_not_labeled_as_safety_block(self):
+        response = FakeResponse(
+            headers={"Content-Type": "text/html"},
+            html="<html></html>",
+        )
+        with (
+            patch(
+                "foia_archive.source_census._request_with_safe_redirects",
+                return_value=(response, "https://agency.gov/foia"),
+            ),
+            patch(
+                "foia_archive.source_census._read_limited_text",
+                side_effect=FileTooLarge("page exceeds census probe limit"),
+            ),
+        ):
+            result = probe_source(
+                "https://agency.gov/foia",
+                user_agent="test",
+            )
+
+        self.assertEqual(result.category, "probe_page_too_large")
+        self.assertIn("FileTooLarge", result.error)
 
     def test_attach_probe_results_counts_categories(self):
         census = {
