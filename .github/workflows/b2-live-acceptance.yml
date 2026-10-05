@@ -29,6 +29,7 @@ jobs:
       B2_REGION: us-east-005
       B2_ENDPOINT_URL: https://s3.us-east-005.backblazeb2.com
       B2_BUCKET: ""
+      PYTHONPATH: .
 
     steps:
       - uses: actions/checkout@v4
