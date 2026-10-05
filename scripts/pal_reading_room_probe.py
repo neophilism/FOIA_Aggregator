@@ -131,6 +131,26 @@ def summarize(url: str) -> None:
         search_response.raise_for_status()
 
         result_soup = BeautifulSoup(search_response.text, "html.parser")
+        for result_script in result_soup.find_all("script"):
+            result_body = result_script.get_text("\n", strip=True)
+            if not result_body:
+                continue
+            for function_name in (
+                "showDocs",
+                "download",
+                "btnNextPrevClicked",
+            ):
+                match = re.search(
+                    rf"function\\s+{function_name}\\s*\\([^)]*\\)\\s*\\{{",
+                    result_body,
+                    flags=re.IGNORECASE,
+                )
+                if match:
+                    print(
+                        f"RESULT_{function_name.upper()}_BLOCK",
+                        result_body[match.start():match.start() + 4500],
+                    )
+
         page_index = result_soup.find(id="pageIndexOption")
         if page_index is not None:
             print(
