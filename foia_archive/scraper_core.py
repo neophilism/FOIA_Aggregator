@@ -959,6 +959,60 @@ def download_document(
     )
 
 
+PERMANENT_DOWNLOAD_FAILURE_STATUSES = {
+    "blocked_url",
+    "too_large",
+    "content_mismatch",
+}
+
+
+def _download_retry_due(
+    existing,
+    config: Config,
+    *,
+    missing_archive_file: bool = False,
+) -> bool:
+    if missing_archive_file:
+        return True
+
+    status = (existing["download_status"] or "").lower()
+    if status in {"", "pending", "downloaded"}:
+        return True
+
+    attempted_at = _parse_utc_timestamp(existing["last_download_attempt_at"])
+    if attempted_at is None:
+        return True
+
+    config_key = (
+        "permanent_download_failure_retry_minutes"
+        if status in PERMANENT_DOWNLOAD_FAILURE_STATUSES
+        else "download_failure_retry_minutes"
+    )
+    try:
+        cooldown_minutes = max(
+            0.0,
+            float(config.downloader.get(config_key, 0)),
+        )
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid %s; disabling document cooldown for this run",
+            config_key,
+        )
+        cooldown_minutes = 0.0
+
+    if cooldown_minutes <= 0:
+        return True
+
+    age_minutes = max(
+        0.0,
+        (
+            datetime.now(timezone.utc) - attempted_at
+        ).total_seconds()
+        / 60.0,
+    )
+    return age_minutes >= cooldown_minutes
+
+
 def _process_document_candidate(
     conn,
     rr,
@@ -979,6 +1033,7 @@ def _process_document_candidate(
     is_new = existing is None
     filename_hint = _filename_hint(canonical, title, file_type)
 
+    missing_archive_file = False
     if existing:
         update_document_published_date_if_missing(conn, canonical, published_date)
         doc_id = existing["id"]
@@ -993,10 +1048,21 @@ def _process_document_candidate(
             archived_path = files_dir / existing["local_path"]
             if archived_path.is_file():
                 return False
+            missing_archive_file = True
             logger.warning(
                 "Stored file missing for %s; retrying download",
                 canonical,
             )
+        elif not dry_run and not _download_retry_due(
+            existing,
+            config,
+            missing_archive_file=missing_archive_file,
+        ):
+            logger.info(
+                "Skipping recent failed download during cooldown: %s",
+                canonical,
+            )
+            return False
     else:
         doc_id = insert_document(
             conn,
