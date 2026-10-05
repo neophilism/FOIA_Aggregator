@@ -242,6 +242,7 @@ def _is_foia_website_fallback(url: str) -> bool:
 
     return (
         "foia" in tokens
+        or {"freedom", "information"}.issubset(tokens)
         or "freedom-of-information" in normalized
     )
 
