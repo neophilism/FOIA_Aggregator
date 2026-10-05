@@ -152,6 +152,13 @@ SOURCE_URL_REPLACEMENTS: Dict[str, str] = {
     "http://www.dcms.uscg.mil/Our-Organization/Assistant-Commandant-for-C4IT-CG-6/The-Office-of-Information-Management-CG-61/FOIA-Library/": "https://www.dcms.uscg.mil/Our-Organization/Assistant-Commandant-for-C4IT-CG-6/The-Office-of-Information-Management-CG-61/FOIA-Library/",
     "http://www.hqmc.marines.mil/Agencies/USMC-FOIA/USMC-FOIA-Reading-Room/": "https://www.hqmc.marines.mil/Agencies/USMC-FOIA/USMC-FOIA-Reading-Room/",
     "http://www.secnav.navy.mil/foia/readingroom/SitePages/Home.aspx": "https://www.secnav.navy.mil/foia/readingroom/SitePages/Home.aspx",
+    "http://www.abilityone.gov/laws,_regulations_and_policy/foia_reading_room.html": "https://www.abilityone.gov/laws%2C_regulations_and_policy/foia_reading_room.html",
+    "http://www.fmshrc.gov/foia/e-reading-room": "https://www.fmshrc.gov/foia/e-reading-room",
+    "https://www.imls.gov/foia-electronic-reading-room": "https://www.imls.gov/communities-impact/additional-resources/foia-reading-room",
+    "https://www.ncd.gov/FOIA/FOIA-e-library": "https://www.ncd.gov/foia/",
+    "http://www.nmb.gov/documents/press-contacts/reading-room-certificate.pdf": "https://nmb.gov/NMB_Application/index.php/foia/",
+    "http://www.prc.gov/foia": "https://www.prc.gov/foia",
+    "https://www.ibwc.gov/Organization/FOIA_RR.html": "https://www.ibwc.gov/foia/",
 }
 
 
