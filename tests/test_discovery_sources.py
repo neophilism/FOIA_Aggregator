@@ -9,6 +9,7 @@ import requests
 
 from foia_archive.discovery import (
     extract_reading_room_sources,
+    fetch_json,
     refresh_metadata,
 )
 from foia_archive.scraper_core import crawl_reading_room, get_reading_rooms_to_crawl
@@ -21,6 +22,113 @@ from foia_archive.storage import (
     upsert_reading_room,
 )
 from foia_archive.utils import Config
+
+
+class MetadataFetchResponse:
+    def __init__(self, status_code=200, payload=None, headers=None):
+        self.status_code = status_code
+        self._payload = payload if payload is not None else {"data": []}
+        self.headers = headers or {}
+
+    def raise_for_status(self):
+        if self.status_code >= 400:
+            raise requests.HTTPError(f"HTTP {self.status_code}")
+
+    def json(self):
+        return self._payload
+
+
+class MetadataFetchRetryTests(unittest.TestCase):
+    def test_rate_limit_honors_retry_after_then_succeeds(self):
+        rate_limited = MetadataFetchResponse(
+            status_code=429,
+            headers={"Retry-After": "3"},
+        )
+        success = MetadataFetchResponse(
+            status_code=200,
+            payload={"data": [{"id": "ok"}]},
+        )
+        with (
+            patch(
+                "foia_archive.discovery.requests.get",
+                side_effect=[rate_limited, success],
+            ) as request,
+            patch("foia_archive.discovery.time.sleep") as sleep,
+        ):
+            payload = fetch_json(
+                "https://api.foia.gov/api/agency_components",
+                5,
+                {"X-API-Key": "test"},
+                max_retries=2,
+                retry_backoff_seconds=1,
+            )
+
+        self.assertEqual(payload["data"][0]["id"], "ok")
+        self.assertEqual(request.call_count, 2)
+        sleep.assert_called_once_with(3.0)
+
+    def test_temporary_server_error_uses_exponential_backoff(self):
+        unavailable = MetadataFetchResponse(status_code=503)
+        success = MetadataFetchResponse(status_code=200, payload={"ok": True})
+        with (
+            patch(
+                "foia_archive.discovery.requests.get",
+                side_effect=[unavailable, success],
+            ),
+            patch("foia_archive.discovery.time.sleep") as sleep,
+        ):
+            payload = fetch_json(
+                "https://api.foia.gov/api/agency",
+                5,
+                {},
+                max_retries=2,
+                retry_backoff_seconds=0.5,
+            )
+
+        self.assertTrue(payload["ok"])
+        sleep.assert_called_once_with(0.5)
+
+    def test_connection_error_is_retried(self):
+        success = MetadataFetchResponse(status_code=200, payload={"ok": True})
+        with (
+            patch(
+                "foia_archive.discovery.requests.get",
+                side_effect=[requests.ConnectionError("reset"), success],
+            ) as request,
+            patch("foia_archive.discovery.time.sleep") as sleep,
+        ):
+            payload = fetch_json(
+                "https://api.foia.gov/api/agency",
+                5,
+                {},
+                max_retries=1,
+                retry_backoff_seconds=0.25,
+            )
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(request.call_count, 2)
+        sleep.assert_called_once_with(0.25)
+
+    def test_non_retryable_client_error_fails_immediately(self):
+        forbidden = MetadataFetchResponse(status_code=403)
+        with (
+            patch(
+                "foia_archive.discovery.requests.get",
+                return_value=forbidden,
+            ) as request,
+            patch("foia_archive.discovery.time.sleep") as sleep,
+        ):
+            with self.assertRaises(requests.HTTPError):
+                fetch_json(
+                    "https://api.foia.gov/api/agency",
+                    5,
+                    {},
+                    max_retries=4,
+                    retry_backoff_seconds=1,
+                )
+
+        request.assert_called_once()
+        sleep.assert_not_called()
 
 
 class ReadingRoomExtractionTests(unittest.TestCase):
@@ -82,6 +190,53 @@ class ReadingRoomExtractionTests(unittest.TestCase):
             [
                 {
                     "url": "https://example.gov/records",
+                    "source_type": "reading_room",
+                }
+            ],
+        )
+
+    def test_foia_component_website_is_used_only_as_fallback(self):
+        attrs = {
+            "website": {"uri": "https://example.gov/about/foia/"},
+        }
+        self.assertEqual(
+            extract_reading_room_sources(attrs),
+            [
+                {
+                    "url": "https://example.gov/about/foia/",
+                    "source_type": "foia_website",
+                }
+            ],
+        )
+
+    def test_generic_or_request_focused_websites_are_not_fallback_sources(self):
+        self.assertEqual(
+            extract_reading_room_sources(
+                {"website": {"uri": "https://example.gov/"}}
+            ),
+            [],
+        )
+        self.assertEqual(
+            extract_reading_room_sources(
+                {
+                    "website": {
+                        "uri": "https://example.gov/foia/request-status/"
+                    }
+                }
+            ),
+            [],
+        )
+
+    def test_explicit_reading_room_wins_over_foia_website_fallback(self):
+        attrs = {
+            "reading_rooms": ["https://example.gov/records/"],
+            "website": {"uri": "https://example.gov/foia/"},
+        }
+        self.assertEqual(
+            extract_reading_room_sources(attrs),
+            [
+                {
+                    "url": "https://example.gov/records/",
                     "source_type": "reading_room",
                 }
             ],
@@ -409,6 +564,49 @@ class MetadataRefreshTests(unittest.TestCase):
             conn.close()
 
         self.assertEqual(active, 1)
+
+    def test_curated_source_is_used_when_metadata_has_no_source(self):
+        components = [
+            {
+                "id": "c1efb796-3bb7-4747-a8b7-415992834318",
+                "attributes": {
+                    "title": "U.S. Election Assistance Commission",
+                    "website": {"uri": "https://www.eac.gov/"},
+                },
+                "relationships": {
+                    "agency": {"data": {"id": "agency-id"}},
+                },
+            }
+        ]
+
+        with (
+            patch(
+                "foia_archive.discovery.fetch_agencies",
+                return_value=self.agencies,
+            ),
+            patch(
+                "foia_archive.discovery.fetch_agency_components",
+                return_value=(components, self.agencies),
+            ),
+        ):
+            refresh_metadata(self.config)
+
+        conn = get_connection(self.db_path)
+        try:
+            row = conn.execute(
+                """
+                SELECT url, source_type, active
+                FROM reading_rooms
+                WHERE url = ?
+                """,
+                ("https://www.eac.gov/foia/foia-reading-room",),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row["source_type"], "curated_foia")
+        self.assertEqual(row["active"], 1)
 
     def test_schema_drift_returning_zero_sources_preserves_active_set(self):
         conn = get_connection(self.db_path)

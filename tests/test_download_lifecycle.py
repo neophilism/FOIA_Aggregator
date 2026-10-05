@@ -129,6 +129,82 @@ class DownloadLifecycleTests(unittest.TestCase):
         self.assertEqual(row["local_path"], "saved.pdf")
         self.assertIsNotNone(row["downloaded_at"])
 
+    def test_recent_failed_download_is_not_retried_every_cycle(self):
+        self.config.data["downloader"] = {
+            "download_failure_retry_minutes": 60,
+        }
+
+        with (
+            patch(
+                "foia_archive.scraper_core.requests.get",
+                side_effect=self._page_get,
+            ),
+            patch(
+                "foia_archive.scraper_core.download_document",
+                return_value=None,
+            ) as first_download,
+        ):
+            crawl_reading_room(
+                self.rr_id,
+                self.config,
+                dry_run=False,
+                max_docs=None,
+            )
+
+        first_download.assert_called_once()
+
+        with (
+            patch(
+                "foia_archive.scraper_core.requests.get",
+                side_effect=self._page_get,
+            ),
+            patch(
+                "foia_archive.scraper_core.download_document",
+                side_effect=self._write_download,
+            ) as immediate_retry,
+        ):
+            crawl_reading_room(
+                self.rr_id,
+                self.config,
+                dry_run=False,
+                max_docs=None,
+            )
+
+        immediate_retry.assert_not_called()
+
+        conn = get_connection(self.db_path)
+        try:
+            conn.execute(
+                """
+                UPDATE documents
+                SET last_download_attempt_at = '2026-01-01T00:00:00'
+                WHERE url = ?
+                """,
+                (self.document_url,),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        with (
+            patch(
+                "foia_archive.scraper_core.requests.get",
+                side_effect=self._page_get,
+            ),
+            patch(
+                "foia_archive.scraper_core.download_document",
+                side_effect=self._write_download,
+            ) as later_retry,
+        ):
+            crawl_reading_room(
+                self.rr_id,
+                self.config,
+                dry_run=False,
+                max_docs=None,
+            )
+
+        later_retry.assert_called_once()
+
     def test_existing_downloaded_file_is_not_downloaded_again(self):
         with (
             patch("foia_archive.scraper_core.requests.get", side_effect=self._page_get),

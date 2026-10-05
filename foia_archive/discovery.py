@@ -3,12 +3,16 @@ from __future__ import annotations
 
 import os
 import re
+import time
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Dict, List, Tuple, TypedDict
 from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
+from .intelligence_community_sources import normalized_ic_elements
+from .source_overrides import current_source_url, curated_sources_for_component
 from .storage import (
     deactivate_reading_rooms_not_seen,
     get_connection,
@@ -19,14 +23,155 @@ from .storage import (
 from .utils import Config, logger, slugify
 
 
-def fetch_json(url: str, timeout: int, headers: Dict[str, str], params: Dict | None = None) -> Dict:
-    resp = requests.get(url, timeout=timeout, headers=headers, params=params)
-    resp.raise_for_status()
-    return resp.json()
+RETRYABLE_METADATA_STATUS_CODES = {429, 500, 502, 503, 504}
+
+
+def _metadata_retry_delay(
+    response,
+    attempt: int,
+    base_seconds: float,
+    max_delay_seconds: float,
+) -> float:
+    headers = getattr(response, "headers", {}) or {}
+    retry_after = headers.get("Retry-After") or headers.get("retry-after")
+
+    delay: float | None = None
+    if retry_after:
+        try:
+            delay = max(0.0, float(retry_after))
+        except ValueError:
+            try:
+                retry_at = parsedate_to_datetime(retry_after)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                delay = max(
+                    0.0,
+                    retry_at.timestamp() - datetime.now(timezone.utc).timestamp(),
+                )
+            except (TypeError, ValueError, OverflowError):
+                delay = None
+
+    if delay is None:
+        reset_value = (
+            headers.get("X-RateLimit-Reset")
+            or headers.get("x-ratelimit-reset")
+            or headers.get("X-Rate-Limit-Reset")
+        )
+        if reset_value:
+            try:
+                reset_at = float(reset_value)
+                delay = max(0.0, reset_at - time.time())
+            except ValueError:
+                delay = None
+
+    if delay is None:
+        delay = max(0.0, float(base_seconds)) * (2 ** attempt)
+
+    return min(max(0.0, float(max_delay_seconds)), delay)
+
+
+def fetch_json(
+    url: str,
+    timeout: int,
+    headers: Dict[str, str],
+    params: Dict | None = None,
+    *,
+    max_retries: int = 4,
+    retry_backoff_seconds: float = 1.0,
+    max_retry_delay_seconds: float = 60.0,
+) -> Dict:
+    """Fetch JSON with bounded retries for temporary FOIA.gov failures."""
+    last_error: Exception | None = None
+
+    for attempt in range(max_retries + 1):
+        resp = None
+        try:
+            resp = requests.get(
+                url,
+                timeout=timeout,
+                headers=headers,
+                params=params,
+            )
+        except requests.RequestException as exc:
+            last_error = exc
+            if attempt >= max_retries:
+                raise
+            delay = min(
+                max(0.0, float(max_retry_delay_seconds)),
+                max(0.0, float(retry_backoff_seconds)) * (2 ** attempt),
+            )
+            logger.warning(
+                "FOIA.gov metadata transport error %s; retrying in %.1fs (%s/%s)",
+                type(exc).__name__,
+                delay,
+                attempt + 1,
+                max_retries,
+            )
+            if delay:
+                time.sleep(delay)
+            continue
+
+        try:
+            if resp.status_code in RETRYABLE_METADATA_STATUS_CODES:
+                if attempt < max_retries:
+                    delay = _metadata_retry_delay(
+                        resp,
+                        attempt,
+                        retry_backoff_seconds,
+                        max_retry_delay_seconds,
+                    )
+                    logger.warning(
+                        "FOIA.gov metadata request returned HTTP %s; retrying in %.1fs (%s/%s)",
+                        resp.status_code,
+                        delay,
+                        attempt + 1,
+                        max_retries,
+                    )
+                    if delay:
+                        time.sleep(delay)
+                    continue
+
+            resp.raise_for_status()
+            try:
+                return resp.json()
+            except ValueError as exc:
+                last_error = exc
+                if attempt >= max_retries:
+                    raise
+                delay = min(
+                    max(0.0, float(max_retry_delay_seconds)),
+                    max(0.0, float(retry_backoff_seconds)) * (2 ** attempt),
+                )
+                logger.warning(
+                    "FOIA.gov metadata returned invalid JSON; retrying in %.1fs (%s/%s)",
+                    delay,
+                    attempt + 1,
+                    max_retries,
+                )
+                if delay:
+                    time.sleep(delay)
+        finally:
+            close = getattr(resp, "close", None)
+            if callable(close):
+                close()
+
+    if last_error is not None:
+        raise RuntimeError(
+            f"FOIA.gov metadata request retries exhausted for {url}: {last_error}"
+        ) from last_error
+    raise RuntimeError(f"FOIA.gov metadata request retries exhausted for {url}")
 
 
 def _fetch_paginated(
-    base_url: str, path: str, timeout: int, headers: Dict[str, str], params: Dict | None = None
+    base_url: str,
+    path: str,
+    timeout: int,
+    headers: Dict[str, str],
+    params: Dict | None = None,
+    *,
+    max_retries: int = 4,
+    retry_backoff_seconds: float = 1.0,
+    max_retry_delay_seconds: float = 60.0,
 ) -> Tuple[List[Dict], List[Dict]]:
     """Fetch all pages for a JSON:API endpoint following provided next links."""
 
@@ -44,7 +189,15 @@ def _fetch_paginated(
             break
         seen_urls.add(next_url)
 
-        payload = fetch_json(next_url, timeout, headers, params=next_params)
+        payload = fetch_json(
+            next_url,
+            timeout,
+            headers,
+            params=next_params,
+            max_retries=max_retries,
+            retry_backoff_seconds=retry_backoff_seconds,
+            max_retry_delay_seconds=max_retry_delay_seconds,
+        )
         batch = payload.get("data") or []
         results.extend(batch)
         included.extend(payload.get("included") or [])
@@ -65,12 +218,36 @@ def _fetch_paginated(
     return results, included
 
 
-def fetch_agencies(base_url: str, timeout: int, headers: Dict[str, str]) -> List[Dict]:
-    agencies, _ = _fetch_paginated(base_url, "agency", timeout, headers)
+def fetch_agencies(
+    base_url: str,
+    timeout: int,
+    headers: Dict[str, str],
+    *,
+    max_retries: int = 4,
+    retry_backoff_seconds: float = 1.0,
+    max_retry_delay_seconds: float = 60.0,
+) -> List[Dict]:
+    agencies, _ = _fetch_paginated(
+        base_url,
+        "agency",
+        timeout,
+        headers,
+        max_retries=max_retries,
+        retry_backoff_seconds=retry_backoff_seconds,
+        max_retry_delay_seconds=max_retry_delay_seconds,
+    )
     return agencies
 
 
-def fetch_agency_components(base_url: str, timeout: int, headers: Dict[str, str]) -> Tuple[List[Dict], List[Dict]]:
+def fetch_agency_components(
+    base_url: str,
+    timeout: int,
+    headers: Dict[str, str],
+    *,
+    max_retries: int = 4,
+    retry_backoff_seconds: float = 1.0,
+    max_retry_delay_seconds: float = 60.0,
+) -> Tuple[List[Dict], List[Dict]]:
     """Fetch FOIA agency components (units) from the FOIA.gov API.
 
     Returns a tuple of (components, included_agencies) where each list is a
@@ -78,7 +255,16 @@ def fetch_agency_components(base_url: str, timeout: int, headers: Dict[str, str]
     """
 
     params = {"include": "agency"}
-    return _fetch_paginated(base_url, "agency_components", timeout, headers, params=params)
+    return _fetch_paginated(
+        base_url,
+        "agency_components",
+        timeout,
+        headers,
+        params=params,
+        max_retries=max_retries,
+        retry_backoff_seconds=retry_backoff_seconds,
+        max_retry_delay_seconds=max_retry_delay_seconds,
+    )
 
 
 SOURCE_TYPE_PRIORITY = {
@@ -86,6 +272,7 @@ SOURCE_TYPE_PRIORITY = {
     "foia_library": 1,
     "proactive_disclosure": 2,
     "frequently_requested_records": 3,
+    "foia_website": 4,
 }
 
 
@@ -143,7 +330,7 @@ def _urls_in_value(value) -> List[str]:
     if isinstance(value, str):
         normalized = _normalize_source_url(value)
         if normalized:
-            urls.append(normalized)
+            urls.append(current_source_url(normalized))
     elif isinstance(value, dict):
         for nested in value.values():
             urls.extend(_urls_in_value(nested))
@@ -153,12 +340,44 @@ def _urls_in_value(value) -> List[str]:
     return urls
 
 
+FOIA_WEBSITE_EXCLUDED_PATH_TERMS = {
+    "request",
+    "submit",
+    "submission",
+    "status",
+    "tracking",
+    "track",
+}
+
+
+def _is_foia_website_fallback(url: str) -> bool:
+    """Return True for a component website that is clearly its FOIA landing page."""
+    try:
+        parsed = urlsplit(url)
+    except ValueError:
+        return False
+
+    path = (parsed.path or "/").lower()
+    normalized = re.sub(r"[^a-z0-9]+", "-", path).strip("-")
+    tokens = {token for token in normalized.split("-") if token}
+
+    if tokens & FOIA_WEBSITE_EXCLUDED_PATH_TERMS:
+        return False
+
+    return (
+        "foia" in tokens
+        or {"freedom", "information"}.issubset(tokens)
+        or "freedom-of-information" in normalized
+    )
+
+
 def extract_reading_room_sources(attrs: Dict) -> List[SourceCandidate]:
     """Extract only URLs explicitly identified as FOIA publication sources.
 
-    General websites, request forms, generic resources, and unrelated links are
-    deliberately ignored. Unknown fields remain unknown rather than being
-    guessed into the crawl set.
+    Explicit reading-room/library/disclosure fields are preferred. If none are
+    present, a component website is accepted only when its URL path is clearly
+    FOIA-related and not a request/status/submission endpoint. Other general
+    websites, request forms, generic resources, and unrelated links are ignored.
     """
     candidates: Dict[str, str] = {}
 
@@ -181,6 +400,15 @@ def extract_reading_room_sources(attrs: Dict) -> List[SourceCandidate]:
                 walk(nested)
 
     walk(attrs)
+
+    # Some FOIA.gov components omit reading_rooms but identify their FOIA
+    # landing page as the component website. Use that only as a fallback, and
+    # only when the URL path itself is unambiguously FOIA-related.
+    if not candidates:
+        for url in _urls_in_value(attrs.get("website")):
+            if _is_foia_website_fallback(url):
+                candidates[url] = "foia_website"
+
     return [
         {"url": url, "source_type": candidates[url]}
         for url in sorted(candidates)
@@ -207,8 +435,30 @@ def refresh_metadata(config: Config) -> None:
         "User-Agent": config.crawler.get("user_agent", "FOIAArchiveBot/0.1"),
         "X-API-Key": api_key,
     }
-    agencies = fetch_agencies(base_url, timeout, headers)
-    components, included_agencies = fetch_agency_components(base_url, timeout, headers)
+    metadata_max_retries = int(config.foia_hub.get("max_retries", 4))
+    metadata_backoff = float(
+        config.foia_hub.get("retry_backoff_seconds", 1)
+    )
+    metadata_max_delay = float(
+        config.foia_hub.get("max_retry_delay_seconds", 60)
+    )
+
+    agencies = fetch_agencies(
+        base_url,
+        timeout,
+        headers,
+        max_retries=metadata_max_retries,
+        retry_backoff_seconds=metadata_backoff,
+        max_retry_delay_seconds=metadata_max_delay,
+    )
+    components, included_agencies = fetch_agency_components(
+        base_url,
+        timeout,
+        headers,
+        max_retries=metadata_max_retries,
+        retry_backoff_seconds=metadata_backoff,
+        max_retry_delay_seconds=metadata_max_delay,
+    )
     logger.info("Fetched %s agencies and %s agency components", len(agencies), len(components))
 
     refresh_seen_at = datetime.now(timezone.utc).isoformat()
@@ -217,6 +467,8 @@ def refresh_metadata(config: Config) -> None:
     agency_cache: Dict[str, int] = {}
     agency_lookup: Dict[str, Dict] = {a.get("id"): a for a in agencies + included_agencies}
     seen_source_count = 0
+    automatic_metadata_source_count = 0
+    seen_source_urls: set[str] = set()
 
     # Persist agencies up front so component handling can link to them reliably.
     for agency in agencies:
@@ -252,6 +504,15 @@ def refresh_metadata(config: Config) -> None:
         # crawl targets. Request forms, agency homepages, and generic links are
         # intentionally not guessed into the reading-room set.
         sources = extract_reading_room_sources(attrs)
+        automatic_metadata_source_count += len(sources)
+        if not sources:
+            sources = [
+                {
+                    "url": source["url"],
+                    "source_type": source["source_type"],
+                }
+                for source in curated_sources_for_component(component.get("id"))
+            ]
 
         for source in sources:
             upsert_reading_room(
@@ -264,13 +525,62 @@ def refresh_metadata(config: Config) -> None:
                 source_type=source["source_type"],
                 seen_at=refresh_seen_at,
             )
+            seen_source_urls.add(source["url"])
+            seen_source_count += 1
+
+    # FOIA.gov does not model every Intelligence Community element as its own
+    # agency component. Add verified supplemental IC roots only when the same
+    # URL was not already discovered above, so shared sources are crawled once.
+    for element in normalized_ic_elements():
+        agency_slug = slugify(element["parent_agency"])
+        agency_id = agency_cache.get(agency_slug)
+        if agency_id is None:
+            agency_id = upsert_agency(
+                conn,
+                agency_slug,
+                element["parent_agency"],
+                {
+                    "supplemental": True,
+                    "intelligence_community": True,
+                },
+            )
+            agency_cache[agency_slug] = agency_id
+
+        office_slug = f"ic-{element['slug']}"
+        office_id = upsert_office(
+            conn,
+            office_slug,
+            element["name"],
+            agency_id,
+            {
+                "supplemental": True,
+                "intelligence_community": True,
+                "element_slug": element["slug"],
+            },
+        )
+
+        for source in element["sources"]:
+            url = source["url"]
+            if url in seen_source_urls:
+                continue
+            upsert_reading_room(
+                conn,
+                url,
+                element["name"],
+                "office",
+                agency_id,
+                office_id,
+                source_type=f"ic_{source['mode']}",
+                seen_at=refresh_seen_at,
+            )
+            seen_source_urls.add(url)
             seen_source_count += 1
 
     if not components:
         logger.warning(
             "FOIA metadata refresh returned zero components; preserving the existing active source set"
         )
-    elif seen_source_count == 0:
+    elif automatic_metadata_source_count == 0:
         logger.warning(
             "FOIA metadata refresh returned components but no recognized publication-source fields; preserving the existing active source set"
         )

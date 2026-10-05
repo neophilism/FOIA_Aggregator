@@ -11,7 +11,8 @@ import tempfile
 import time
 from collections import deque
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Deque, Dict, List, Optional, Set, TypedDict
 from urllib.parse import unquote, urljoin, urlparse, urlunparse
@@ -295,11 +296,60 @@ def _published_date_from_context(anchor) -> Optional[str]:
     return None
 
 
+def _parse_utc_timestamp(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def get_reading_rooms_to_crawl(config: Config, limit: Optional[int] = None):
     conn = get_connection(config.storage.get("db_path"))
-    rooms = list_reading_rooms(conn, limit=limit)
-    conn.close()
-    return rooms
+    try:
+        rooms = list_reading_rooms(conn, limit=limit)
+    finally:
+        conn.close()
+
+    try:
+        cooldown_minutes = max(
+            0.0,
+            float(config.crawler.get("failed_source_retry_minutes", 60)),
+        )
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid failed_source_retry_minutes; using 60-minute cooldown"
+        )
+        cooldown_minutes = 60.0
+    if cooldown_minutes <= 0:
+        return rooms
+
+    now = datetime.now(timezone.utc)
+    eligible = []
+    skipped = 0
+    for room in rooms:
+        failed_at = _parse_utc_timestamp(room["last_error_at"])
+        if failed_at is not None:
+            age_minutes = max(
+                0.0,
+                (now - failed_at).total_seconds() / 60.0,
+            )
+            if age_minutes < cooldown_minutes:
+                skipped += 1
+                continue
+        eligible.append(room)
+
+    if skipped:
+        logger.info(
+            "Skipping %s recently failed reading rooms for %.1f-minute cooldown",
+            skipped,
+            cooldown_minutes,
+        )
+    return eligible
 
 
 def _is_http_url(url: str) -> bool:
@@ -643,17 +693,57 @@ def _stream_response_to_file(
                 pass
 
 
+def _retry_delay(
+    attempt: int,
+    base_seconds: float,
+    retry_after: Optional[str] = None,
+    rate_limit_reset: Optional[str] = None,
+    max_delay_seconds: float = 60.0,
+) -> float:
+    delay = max(0.0, float(base_seconds)) * (2 ** attempt)
+
+    hinted_delay: Optional[float] = None
+    if retry_after:
+        try:
+            hinted_delay = max(0.0, float(retry_after))
+        except ValueError:
+            try:
+                retry_at = parsedate_to_datetime(retry_after)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                hinted_delay = max(
+                    0.0,
+                    retry_at.timestamp() - datetime.now(timezone.utc).timestamp(),
+                )
+            except (TypeError, ValueError, OverflowError):
+                hinted_delay = None
+
+    if hinted_delay is None and rate_limit_reset:
+        try:
+            hinted_delay = max(0.0, float(rate_limit_reset) - time.time())
+        except ValueError:
+            hinted_delay = None
+
+    if hinted_delay is not None:
+        delay = max(delay, hinted_delay)
+
+    return min(max(0.0, float(max_delay_seconds)), delay)
+
+
 def _retry_sleep(
     attempt: int,
     base_seconds: float,
     retry_after: Optional[str] = None,
+    rate_limit_reset: Optional[str] = None,
+    max_delay_seconds: float = 60.0,
 ) -> None:
-    delay = max(0.0, float(base_seconds)) * (2 ** attempt)
-    if retry_after:
-        try:
-            delay = max(delay, float(retry_after))
-        except ValueError:
-            pass
+    delay = _retry_delay(
+        attempt,
+        base_seconds,
+        retry_after=retry_after,
+        rate_limit_reset=rate_limit_reset,
+        max_delay_seconds=max_delay_seconds,
+    )
     if delay > 0:
         time.sleep(delay)
 
@@ -701,6 +791,9 @@ def _fetch_crawl_resource(
     max_redirects = int(config.downloader.get("max_redirects", 5))
     max_retries = int(config.downloader.get("max_retries", 3))
     backoff = float(config.downloader.get("retry_backoff_seconds", 1))
+    max_retry_delay = float(
+        config.downloader.get("max_retry_delay_seconds", 60)
+    )
 
     for attempt in range(max_retries + 1):
         response = None
@@ -716,10 +809,21 @@ def _fetch_crawl_resource(
             if status_code in RETRYABLE_STATUS_CODES:
                 headers_map = getattr(response, "headers", {}) or {}
                 retry_after = headers_map.get("Retry-After") or headers_map.get("retry-after")
+                rate_limit_reset = (
+                    headers_map.get("X-RateLimit-Reset")
+                    or headers_map.get("x-ratelimit-reset")
+                    or headers_map.get("X-Rate-Limit-Reset")
+                )
                 _close_response(response)
                 response = None
                 if attempt < max_retries:
-                    _retry_sleep(attempt, backoff, retry_after)
+                    _retry_sleep(
+                        attempt,
+                        backoff,
+                        retry_after=retry_after,
+                        rate_limit_reset=rate_limit_reset,
+                        max_delay_seconds=max_retry_delay,
+                    )
                     continue
                 raise requests.HTTPError(
                     f"HTTP {status_code} while crawling {final_url}"
@@ -755,6 +859,9 @@ def download_document(
     max_redirects = int(config.downloader.get("max_redirects", 5))
     max_retries = int(config.downloader.get("max_retries", 3))
     backoff = float(config.downloader.get("retry_backoff_seconds", 1))
+    max_retry_delay = float(
+        config.downloader.get("max_retry_delay_seconds", 60)
+    )
     max_file_size_mb = float(config.downloader.get("max_file_size_mb", 100))
     max_bytes = max(1, int(max_file_size_mb * 1024 * 1024))
 
@@ -773,10 +880,21 @@ def download_document(
                 error = f"HTTP {status_code} while downloading {final_url}"
                 headers_map = getattr(response, "headers", {}) or {}
                 retry_after = headers_map.get("Retry-After") or headers_map.get("retry-after")
+                rate_limit_reset = (
+                    headers_map.get("X-RateLimit-Reset")
+                    or headers_map.get("x-ratelimit-reset")
+                    or headers_map.get("X-Rate-Limit-Reset")
+                )
                 _close_response(response)
                 response = None
                 if attempt < max_retries:
-                    _retry_sleep(attempt, backoff, retry_after)
+                    _retry_sleep(
+                        attempt,
+                        backoff,
+                        retry_after=retry_after,
+                        rate_limit_reset=rate_limit_reset,
+                        max_delay_seconds=max_retry_delay,
+                    )
                     continue
                 return DownloadResult(status="http_error", error=error)
 
@@ -841,6 +959,60 @@ def download_document(
     )
 
 
+PERMANENT_DOWNLOAD_FAILURE_STATUSES = {
+    "blocked_url",
+    "too_large",
+    "content_mismatch",
+}
+
+
+def _download_retry_due(
+    existing,
+    config: Config,
+    *,
+    missing_archive_file: bool = False,
+) -> bool:
+    if missing_archive_file:
+        return True
+
+    status = (existing["download_status"] or "").lower()
+    if status in {"", "pending", "downloaded"}:
+        return True
+
+    attempted_at = _parse_utc_timestamp(existing["last_download_attempt_at"])
+    if attempted_at is None:
+        return True
+
+    config_key = (
+        "permanent_download_failure_retry_minutes"
+        if status in PERMANENT_DOWNLOAD_FAILURE_STATUSES
+        else "download_failure_retry_minutes"
+    )
+    try:
+        cooldown_minutes = max(
+            0.0,
+            float(config.downloader.get(config_key, 0)),
+        )
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid %s; disabling document cooldown for this run",
+            config_key,
+        )
+        cooldown_minutes = 0.0
+
+    if cooldown_minutes <= 0:
+        return True
+
+    age_minutes = max(
+        0.0,
+        (
+            datetime.now(timezone.utc) - attempted_at
+        ).total_seconds()
+        / 60.0,
+    )
+    return age_minutes >= cooldown_minutes
+
+
 def _process_document_candidate(
     conn,
     rr,
@@ -861,6 +1033,7 @@ def _process_document_candidate(
     is_new = existing is None
     filename_hint = _filename_hint(canonical, title, file_type)
 
+    missing_archive_file = False
     if existing:
         update_document_published_date_if_missing(conn, canonical, published_date)
         doc_id = existing["id"]
@@ -875,10 +1048,21 @@ def _process_document_candidate(
             archived_path = files_dir / existing["local_path"]
             if archived_path.is_file():
                 return False
+            missing_archive_file = True
             logger.warning(
                 "Stored file missing for %s; retrying download",
                 canonical,
             )
+        elif not dry_run and not _download_retry_due(
+            existing,
+            config,
+            missing_archive_file=missing_archive_file,
+        ):
+            logger.info(
+                "Skipping recent failed download during cooldown: %s",
+                canonical,
+            )
+            return False
     else:
         doc_id = insert_document(
             conn,
@@ -934,21 +1118,20 @@ def _process_document_candidate(
     return is_new
 
 
-def crawl_reading_room(
+def _crawl_reading_room_with_connection(
+    conn,
     rr_id: int,
     config: Config,
     dry_run: bool,
     max_docs: Optional[int],
     rate_limiter: Optional[HostRateLimiter] = None,
 ) -> None:
-    conn = get_connection(config.storage.get("db_path"))
     rr = conn.execute(
         "SELECT * FROM reading_rooms WHERE id = ?",
         (rr_id,),
     ).fetchone()
     if not rr:
         logger.warning("Reading room %s not found", rr_id)
-        conn.close()
         return
 
     root_url = canonicalize_url(rr["url"])
@@ -960,7 +1143,6 @@ def crawl_reading_room(
             attempted_at,
             "Unsafe or invalid reading room URL",
         )
-        conn.close()
         return
 
     if rate_limiter is None:
@@ -1070,7 +1252,6 @@ def crawl_reading_room(
                     attempted_at,
                     error,
                 )
-                conn.close()
                 return
             logger.warning("Failed to crawl %s: %s", target.url, exc)
             continue
@@ -1143,4 +1324,25 @@ def crawl_reading_room(
         rr_id,
         datetime.utcnow().isoformat(),
     )
-    conn.close()
+
+
+def crawl_reading_room(
+    rr_id: int,
+    config: Config,
+    dry_run: bool,
+    max_docs: Optional[int],
+    rate_limiter: Optional[HostRateLimiter] = None,
+) -> None:
+    """Crawl one source and always release its SQLite connection."""
+    conn = get_connection(config.storage.get("db_path"))
+    try:
+        _crawl_reading_room_with_connection(
+            conn,
+            rr_id,
+            config,
+            dry_run,
+            max_docs,
+            rate_limiter=rate_limiter,
+        )
+    finally:
+        conn.close()
