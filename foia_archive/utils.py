@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import logging
+import os
 import re
 import unicodedata
 from dataclasses import dataclass
@@ -40,6 +41,21 @@ def load_config(path: str, overrides: Optional[Dict[str, Any]] = None) -> Config
     config_path = Path(path)
     with config_path.open("r") as f:
         data: Dict[str, Any] = yaml.safe_load(f) or {}
+
+    storage = data.setdefault("storage", {})
+    if not isinstance(storage, dict):
+        storage = {}
+        data["storage"] = storage
+
+    env_db_path = (os.getenv("FOIA_DB_PATH") or "").strip()
+    env_files_dir = (os.getenv("FOIA_FILES_DIR") or "").strip()
+    env_storage_backend = (os.getenv("FOIA_STORAGE_BACKEND") or "").strip()
+    if env_db_path:
+        storage["db_path"] = env_db_path
+    if env_files_dir:
+        storage["files_dir"] = env_files_dir
+    if env_storage_backend:
+        storage["backend"] = env_storage_backend
 
     overrides = overrides or {}
     for section, values in overrides.items():
