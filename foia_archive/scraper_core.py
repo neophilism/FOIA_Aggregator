@@ -325,10 +325,51 @@ def _parse_utc_timestamp(value: Optional[str]) -> Optional[datetime]:
     return parsed.astimezone(timezone.utc)
 
 
+def _breadth_first_source_limit(rooms, limit: Optional[int]):
+    """Prefer one eligible source per agency before adding agency duplicates."""
+    if limit is None:
+        return rooms
+    try:
+        limit_value = int(limit)
+    except (TypeError, ValueError):
+        return rooms
+    if limit_value <= 0 or len(rooms) <= limit_value:
+        return rooms
+
+    selected = []
+    deferred = []
+    seen_agencies = set()
+
+    for room in rooms:
+        agency_id = room["agency_id"]
+        if agency_id is None:
+            # Curated/shared roots without an agency ID should not all collapse
+            # into one bucket; each remains independently eligible.
+            group = ("room", room["id"])
+        else:
+            group = ("agency", agency_id)
+
+        if group not in seen_agencies:
+            selected.append(room)
+            seen_agencies.add(group)
+            if len(selected) >= limit_value:
+                return selected
+        else:
+            deferred.append(room)
+
+    for room in deferred:
+        selected.append(room)
+        if len(selected) >= limit_value:
+            break
+    return selected
+
+
 def get_reading_rooms_to_crawl(config: Config, limit: Optional[int] = None):
     conn = get_connection(config.storage.get("db_path"))
     try:
-        rooms = list_reading_rooms(conn, limit=limit)
+        # Apply cooldown before presentation/source limiting so a failed root
+        # does not occupy one of the bounded crawl slots.
+        rooms = list_reading_rooms(conn, limit=None)
     finally:
         conn.close()
 
@@ -342,8 +383,9 @@ def get_reading_rooms_to_crawl(config: Config, limit: Optional[int] = None):
             "Invalid failed_source_retry_minutes; using 60-minute cooldown"
         )
         cooldown_minutes = 60.0
+
     if cooldown_minutes <= 0:
-        return rooms
+        return _breadth_first_source_limit(rooms, limit)
 
     now = datetime.now(timezone.utc)
     eligible = []
@@ -366,7 +408,7 @@ def get_reading_rooms_to_crawl(config: Config, limit: Optional[int] = None):
             skipped,
             cooldown_minutes,
         )
-    return eligible
+    return _breadth_first_source_limit(eligible, limit)
 
 
 def _is_http_url(url: str) -> bool:
