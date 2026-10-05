@@ -1,10 +1,13 @@
 name: FOIA source census
 
 on:
-  push:
-    branches:
-      - feat/source-census
   workflow_dispatch:
+  schedule:
+    - cron: "17 6 * * 0"
+
+concurrency:
+  group: source-census-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   census:
