@@ -8,7 +8,7 @@ import tempfile
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Iterable, Optional
+from typing import Optional
 
 from .archive_storage import ArchiveStorageError, B2ArchiveStorage, get_archive_storage
 from .utils import Config, logger
@@ -33,7 +33,6 @@ def _snapshot_sqlite(source_path: Path, destination_path: Path) -> None:
     destination = sqlite3.connect(str(destination_path), timeout=30)
     try:
         source.backup(destination)
-        destination.execute("PRAGMA quick_check")
         row = destination.execute("PRAGMA quick_check").fetchone()
         if not row or row[0] != "ok":
             raise ArchiveStorageError(
@@ -267,3 +266,120 @@ def backup_database_to_b2(
         sha256=sqlite_sha256,
         created_at=now,
     )
+
+def list_database_backups(config: Config) -> list[dict]:
+    """Return B2 database backups newest first."""
+    backend = get_archive_storage(config)
+    if not isinstance(backend, B2ArchiveStorage):
+        return []
+    settings = config.data.get("database_backup") or {}
+    prefix = str(settings.get("prefix") or "database-backups/").strip("/") + "/"
+    objects = _list_backup_objects(backend, prefix)
+    objects.sort(
+        key=lambda item: item.get("LastModified")
+        or datetime.min.replace(tzinfo=timezone.utc),
+        reverse=True,
+    )
+    return objects
+
+
+def restore_database_from_b2(
+    config: Config,
+    *,
+    key: Optional[str] = None,
+    destination_path: Optional[Path | str] = None,
+    overwrite: bool = False,
+) -> Path:
+    """Download and verify a B2 SQLite backup into a recovery file.
+
+    The default destination is separate from the live database so a restore
+    never overwrites production state accidentally.
+    """
+    backend = get_archive_storage(config)
+    if not isinstance(backend, B2ArchiveStorage):
+        raise ArchiveStorageError("Database restore requires B2 storage")
+
+    backups = list_database_backups(config)
+    if key is None:
+        if not backups:
+            raise ArchiveStorageError("No database backups are available")
+        key = str(backups[0].get("Key") or "")
+    if not key:
+        raise ArchiveStorageError("Database backup key is empty")
+
+    live_db = Path(config.storage.get("db_path", "data/foia_archive.db"))
+    destination = Path(
+        destination_path
+        or live_db.with_name(f"{live_db.stem}.restored{live_db.suffix}")
+    )
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists() and not overwrite:
+        raise ArchiveStorageError(
+            f"Restore destination already exists: {destination}. "
+            "Choose another path or explicitly allow overwrite."
+        )
+
+    with tempfile.TemporaryDirectory(
+        prefix="foia-db-restore-",
+        dir=str(destination.parent),
+    ) as tempdir:
+        temp = Path(tempdir)
+        compressed = temp / "backup.sqlite.gz"
+        restored = temp / "restored.sqlite"
+
+        try:
+            backend.client.download_file(
+                backend.bucket,
+                key,
+                str(compressed),
+            )
+            metadata = backend.client.head_object(
+                Bucket=backend.bucket,
+                Key=key,
+            )
+        except Exception as exc:
+            raise ArchiveStorageError(
+                f"Database backup download failed for {key}: {exc}"
+            ) from exc
+
+        digest = hashlib.sha256()
+        try:
+            with gzip.open(compressed, "rb") as source, restored.open("wb") as target:
+                while True:
+                    chunk = source.read(1024 * 1024)
+                    if not chunk:
+                        break
+                    digest.update(chunk)
+                    target.write(chunk)
+        except (OSError, EOFError) as exc:
+            raise ArchiveStorageError(
+                f"Database backup is not a valid gzip stream: {key}"
+            ) from exc
+
+        expected_sha = str(
+            (metadata.get("Metadata") or {}).get("sqlite-sha256") or ""
+        )
+        actual_sha = digest.hexdigest()
+        if expected_sha and expected_sha != actual_sha:
+            raise ArchiveStorageError(
+                f"Database backup SHA-256 mismatch for {key}"
+            )
+
+        check = sqlite3.connect(str(restored))
+        try:
+            row = check.execute("PRAGMA quick_check").fetchone()
+            if not row or row[0] != "ok":
+                raise ArchiveStorageError(
+                    f"Restored SQLite integrity check failed: "
+                    f"{row[0] if row else 'no result'}"
+                )
+        finally:
+            check.close()
+
+        if destination.exists():
+            destination.unlink()
+        restored.replace(destination)
+
+    logger.info("Restored verified SQLite backup %s to %s", key, destination)
+    return destination
+
