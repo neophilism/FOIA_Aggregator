@@ -14,7 +14,9 @@ import uuid
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+import boto3
 import requests
+from botocore.exceptions import ClientError
 
 from foia_archive.archive_storage import B2ArchiveStorage
 from foia_archive.database_backup import (
@@ -41,19 +43,41 @@ def _required_env(name: str) -> str:
     return value
 
 
-def _authorize(key_id: str, application_key: str) -> dict:
+def _authorize(key_id: str, application_key: str) -> tuple[dict | None, str | None]:
     response = requests.get(
         AUTHORIZE_URL,
         auth=(key_id, application_key),
         timeout=30,
     )
     if response.status_code == 401:
-        raise RuntimeError(
-            "Backblaze rejected the application key credentials (HTTP 401). "
-            "Verify or rotate B2_KEY_ID and B2_APPLICATION_KEY."
-        )
+        return None, "native_401"
     response.raise_for_status()
-    return response.json()
+    return response.json(), None
+
+
+def _s3_probe(
+    key_id: str,
+    application_key: str,
+    endpoint: str,
+    region: str,
+) -> tuple[object, list[dict]]:
+    client = boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        region_name=region,
+        aws_access_key_id=key_id,
+        aws_secret_access_key=application_key,
+    )
+    try:
+        response = client.list_buckets()
+    except ClientError as exc:
+        error = (exc.response or {}).get("Error") or {}
+        code = error.get("Code") or "unknown"
+        raise RuntimeError(
+            f"Backblaze S3 authentication/probe failed ({code}). "
+            "The stored B2 key pair is not usable by the S3 API."
+        ) from exc
+    return client, list(response.get("Buckets") or [])
 
 
 def _storage_info(auth: dict) -> dict:
@@ -227,23 +251,67 @@ def main() -> None:
     key_id = _required_env("B2_KEY_ID")
     application_key = _required_env("B2_APPLICATION_KEY")
 
+    endpoint = (
+        (os.getenv("B2_ENDPOINT_URL") or "").strip()
+        or "https://s3.us-east-005.backblazeb2.com"
+    ).rstrip("/")
+    region = (os.getenv("B2_REGION") or "").strip() or "us-east-005"
+
     print("1/7 Authorizing application key")
-    auth = _authorize(key_id, application_key)
-    storage = _storage_info(auth)
-    bucket, bucket_id, capabilities = _select_bucket(storage)
-    endpoint, region = _endpoint_and_region(storage)
+    auth, native_error = _authorize(key_id, application_key)
+    bucket_id = None
 
-    missing = sorted(REQUIRED_CAPABILITIES - capabilities)
-    if missing:
-        raise RuntimeError(
-            "Application key is missing required capabilities: "
-            + ", ".join(missing)
+    if auth is not None:
+        storage = _storage_info(auth)
+        bucket, bucket_id, capabilities = _select_bucket(storage)
+        endpoint, region = _endpoint_and_region(storage)
+        missing = sorted(REQUIRED_CAPABILITIES - capabilities)
+        if missing:
+            raise RuntimeError(
+                "Application key is missing required capabilities: "
+                + ", ".join(missing)
+            )
+        print(
+            "2/7 Native authorization succeeded; bucket discovered and "
+            f"capabilities verified (region={region})"
         )
-
-    print(
-        "2/7 Bucket discovered and key capabilities verified "
-        f"(region={region}, private bucket expected)"
-    )
+    else:
+        print(
+            "2/7 Native authorization returned HTTP 401; probing the same "
+            "credentials through the S3-compatible API"
+        )
+        _, buckets = _s3_probe(
+            key_id,
+            application_key,
+            endpoint,
+            region,
+        )
+        requested_name = (os.getenv("B2_BUCKET") or "").strip()
+        if requested_name:
+            match = next(
+                (item for item in buckets if item.get("Name") == requested_name),
+                None,
+            )
+            if match is None:
+                raise RuntimeError(
+                    "S3 authentication succeeded but B2_BUCKET was not visible"
+                )
+            bucket = requested_name
+        elif len(buckets) == 1:
+            bucket = str(buckets[0]["Name"])
+        elif len(buckets) == 0:
+            raise RuntimeError(
+                "S3 authentication succeeded but no bucket was visible. "
+                "Set B2_BUCKET explicitly or grant list-bucket access."
+            )
+        else:
+            raise RuntimeError(
+                "S3 authentication succeeded and multiple buckets are visible. "
+                "Set B2_BUCKET explicitly."
+            )
+        print(
+            "S3 authentication succeeded; continuing with the uniquely visible bucket"
+        )
 
     backend = B2ArchiveStorage(
         bucket=bucket,
