@@ -195,6 +195,53 @@ class ReadingRoomExtractionTests(unittest.TestCase):
             ],
         )
 
+    def test_foia_component_website_is_used_only_as_fallback(self):
+        attrs = {
+            "website": {"uri": "https://example.gov/about/foia/"},
+        }
+        self.assertEqual(
+            extract_reading_room_sources(attrs),
+            [
+                {
+                    "url": "https://example.gov/about/foia/",
+                    "source_type": "foia_website",
+                }
+            ],
+        )
+
+    def test_generic_or_request_focused_websites_are_not_fallback_sources(self):
+        self.assertEqual(
+            extract_reading_room_sources(
+                {"website": {"uri": "https://example.gov/"}}
+            ),
+            [],
+        )
+        self.assertEqual(
+            extract_reading_room_sources(
+                {
+                    "website": {
+                        "uri": "https://example.gov/foia/request-status/"
+                    }
+                }
+            ),
+            [],
+        )
+
+    def test_explicit_reading_room_wins_over_foia_website_fallback(self):
+        attrs = {
+            "reading_rooms": ["https://example.gov/records/"],
+            "website": {"uri": "https://example.gov/foia/"},
+        }
+        self.assertEqual(
+            extract_reading_room_sources(attrs),
+            [
+                {
+                    "url": "https://example.gov/records/",
+                    "source_type": "reading_room",
+                }
+            ],
+        )
+
     def test_credentials_and_non_http_sources_are_ignored(self):
         attrs = {
             "reading_room": [
