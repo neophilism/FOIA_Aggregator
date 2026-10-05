@@ -13,6 +13,10 @@ crawler:
 foia_hub:
   base_url: "https://api.foia.gov/api"
   timeout_seconds: 30
+  max_retries: 5
+  retry_backoff_seconds: 1
+  max_retry_delay_seconds: 60
+  max_retry_delay_seconds: 60
   # api_key can be provided here or via the FOIA_API_KEY environment variable.
   api_key: ""
 
