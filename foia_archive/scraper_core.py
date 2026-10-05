@@ -1284,9 +1284,13 @@ def _process_document_candidate(
             except (TypeError, ValueError):
                 max_indexed_chars = 5_000_000
             max_indexed_chars = max(1_000, max_indexed_chars)
+            effective_file_type = DOCUMENT_MIME_TYPES.get(
+                result.mime_type or "",
+                file_type,
+            )
             extraction = extract_document_text(
                 result.path,
-                file_type,
+                effective_file_type,
                 max_chars=max_indexed_chars,
                 ocr=OCRSettings.from_mapping(config.data.get("ocr")),
             )
