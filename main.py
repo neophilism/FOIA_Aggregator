@@ -1,6 +1,9 @@
 import typer
 
-from foia_archive.database_backup import backup_database_to_b2
+from foia_archive.database_backup import (
+    backup_database_to_b2,
+    restore_database_from_b2,
+)
 from foia_archive.engine import run_once
 from foia_archive.scheduler import run_forever
 from foia_archive.utils import load_config, parse_bool
@@ -53,6 +56,36 @@ def backup_db(
     typer.echo(
         f"Uploaded {result.key} ({result.compressed_bytes} bytes)"
     )
+
+
+@app.command("restore-db")
+def restore_db(
+    config: str = "config/settings.yaml",
+    key: str | None = typer.Option(
+        None,
+        "--key",
+        help="Specific B2 backup object key. Defaults to the newest backup.",
+    ),
+    destination: str | None = typer.Option(
+        None,
+        "--destination",
+        help="Recovery database path. Defaults beside the live DB as *.restored.db.",
+    ),
+    overwrite: bool = typer.Option(
+        False,
+        "--overwrite",
+        help="Allow replacing an existing recovery destination.",
+    ),
+):
+    """Restore and verify a B2 backup into a separate recovery database."""
+    cfg = load_config(config)
+    restored = restore_database_from_b2(
+        cfg,
+        key=key,
+        destination_path=destination,
+        overwrite=overwrite,
+    )
+    typer.echo(f"Restored verified database to {restored}")
 
 
 @app.command()
