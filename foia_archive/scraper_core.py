@@ -1052,21 +1052,20 @@ def _process_document_candidate(
     return is_new
 
 
-def crawl_reading_room(
+def _crawl_reading_room_with_connection(
+    conn,
     rr_id: int,
     config: Config,
     dry_run: bool,
     max_docs: Optional[int],
     rate_limiter: Optional[HostRateLimiter] = None,
 ) -> None:
-    conn = get_connection(config.storage.get("db_path"))
     rr = conn.execute(
         "SELECT * FROM reading_rooms WHERE id = ?",
         (rr_id,),
     ).fetchone()
     if not rr:
         logger.warning("Reading room %s not found", rr_id)
-        conn.close()
         return
 
     root_url = canonicalize_url(rr["url"])
@@ -1078,7 +1077,6 @@ def crawl_reading_room(
             attempted_at,
             "Unsafe or invalid reading room URL",
         )
-        conn.close()
         return
 
     if rate_limiter is None:
@@ -1188,7 +1186,6 @@ def crawl_reading_room(
                     attempted_at,
                     error,
                 )
-                conn.close()
                 return
             logger.warning("Failed to crawl %s: %s", target.url, exc)
             continue
@@ -1261,4 +1258,25 @@ def crawl_reading_room(
         rr_id,
         datetime.utcnow().isoformat(),
     )
-    conn.close()
+
+
+def crawl_reading_room(
+    rr_id: int,
+    config: Config,
+    dry_run: bool,
+    max_docs: Optional[int],
+    rate_limiter: Optional[HostRateLimiter] = None,
+) -> None:
+    """Crawl one source and always release its SQLite connection."""
+    conn = get_connection(config.storage.get("db_path"))
+    try:
+        _crawl_reading_room_with_connection(
+            conn,
+            rr_id,
+            config,
+            dry_run,
+            max_docs,
+            rate_limiter=rate_limiter,
+        )
+    finally:
+        conn.close()
