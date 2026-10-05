@@ -13,7 +13,16 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from foia_archive.archive_storage import ArchiveStorageError, LocalArchiveStorage, get_archive_storage
-from foia_archive.storage import SORT_ORDERS, get_connection, init_db, query_documents_page
+from foia_archive.storage import (
+    SORT_ORDERS,
+    get_archive_stats,
+    get_connection,
+    get_document_detail,
+    get_document_source_details,
+    init_db,
+    query_document_snippets,
+    query_documents_page,
+)
 from foia_archive.utils import load_config
 
 config = load_config("config/settings.yaml")
@@ -21,9 +30,27 @@ DB_PATH = Path(config.storage.get("db_path"))
 FILES_DIR = Path(config.storage.get("files_dir"))
 init_db(DB_PATH, FILES_DIR)
 
-app = FastAPI(title="FOIA Archive")
+app = FastAPI(title="FOIA Aggregator")
 templates = Jinja2Templates(directory="ui/templates")
+app.mount("/static", StaticFiles(directory="ui/static"), name="static")
 app.mount("/files", StaticFiles(directory=str(FILES_DIR)), name="files")
+
+
+def human_file_size(value: Optional[int]) -> str:
+    if value is None:
+        return "Unknown"
+    size = float(value)
+    units = ("B", "KB", "MB", "GB", "TB")
+    for unit in units:
+        if size < 1024 or unit == units[-1]:
+            if unit == "B":
+                return f"{int(size)} {unit}"
+            return f"{size:.1f} {unit}"
+        size /= 1024
+    return f"{int(value)} B"
+
+
+templates.env.filters["filesize"] = human_file_size
 
 
 def get_db() -> sqlite3.Connection:
@@ -97,6 +124,41 @@ def _page_url(
     }
     return "/?" + urlencode(
         {key: value for key, value in params.items() if value not in (None, "")}
+    )
+
+
+@app.get("/about", response_class=HTMLResponse)
+async def about_page(request: Request):
+    conn = get_db()
+    try:
+        stats = get_archive_stats(conn)
+    finally:
+        conn.close()
+    return templates.TemplateResponse(
+        request=request,
+        name="about.html",
+        context={"stats": stats},
+    )
+
+
+@app.get("/record/{document_id}", response_class=HTMLResponse)
+async def record_detail(request: Request, document_id: int):
+    conn = get_db()
+    try:
+        document = get_document_detail(conn, document_id)
+        if document is None:
+            raise HTTPException(status_code=404, detail="Document not found")
+        sources = get_document_source_details(conn, document_id)
+    finally:
+        conn.close()
+
+    return templates.TemplateResponse(
+        request=request,
+        name="record.html",
+        context={
+            "document": document,
+            "sources": sources,
+        },
     )
 
 
@@ -186,6 +248,7 @@ async def search_page(
             page=page,
             page_size=page_size,
         )
+        stats = get_archive_stats(conn)
         total_pages = max(1, math.ceil(total_results / page_size))
         if total_results and page > total_pages:
             page = total_pages
@@ -201,6 +264,17 @@ async def search_page(
                 page=page,
                 page_size=page_size,
             )
+
+        snippets = query_document_snippets(
+            conn,
+            [row["id"] for row in documents],
+            title_query,
+        )
+        document_items = []
+        for row in documents:
+            item = dict(row)
+            item["snippet"] = snippets.get(row["id"])
+            document_items.append(item)
     finally:
         conn.close()
 
@@ -249,7 +323,19 @@ async def search_page(
             "agencies": agencies,
             "offices": offices,
             "file_types": file_types,
-            "documents": documents,
+            "documents": document_items,
+            "stats": stats,
+            "filters_active": any(
+                (
+                    agency_filter_id,
+                    office_filter_id,
+                    file_type,
+                    start_date,
+                    end_date,
+                    sort != "discovered_desc",
+                    page_size != 50,
+                )
+            ),
             "title_query": title_query or "",
             "selected_agency": agency_filter_id,
             "selected_office": office_filter_id,
