@@ -5,6 +5,7 @@ import os
 import re
 import time
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
 from typing import Dict, List, Tuple, TypedDict
 from urllib.parse import urlsplit, urlunsplit
 
@@ -28,14 +29,44 @@ def _metadata_retry_delay(
     response,
     attempt: int,
     base_seconds: float,
+    max_delay_seconds: float,
 ) -> float:
-    retry_after = (getattr(response, "headers", {}) or {}).get("Retry-After")
+    headers = getattr(response, "headers", {}) or {}
+    retry_after = headers.get("Retry-After") or headers.get("retry-after")
+
+    delay: float | None = None
     if retry_after:
         try:
-            return max(0.0, float(retry_after))
+            delay = max(0.0, float(retry_after))
         except ValueError:
-            pass
-    return max(0.0, float(base_seconds)) * (2 ** attempt)
+            try:
+                retry_at = parsedate_to_datetime(retry_after)
+                if retry_at.tzinfo is None:
+                    retry_at = retry_at.replace(tzinfo=timezone.utc)
+                delay = max(
+                    0.0,
+                    retry_at.timestamp() - datetime.now(timezone.utc).timestamp(),
+                )
+            except (TypeError, ValueError, OverflowError):
+                delay = None
+
+    if delay is None:
+        reset_value = (
+            headers.get("X-RateLimit-Reset")
+            or headers.get("x-ratelimit-reset")
+            or headers.get("X-Rate-Limit-Reset")
+        )
+        if reset_value:
+            try:
+                reset_at = float(reset_value)
+                delay = max(0.0, reset_at - time.time())
+            except ValueError:
+                delay = None
+
+    if delay is None:
+        delay = max(0.0, float(base_seconds)) * (2 ** attempt)
+
+    return min(max(0.0, float(max_delay_seconds)), delay)
 
 
 def fetch_json(
@@ -46,6 +77,7 @@ def fetch_json(
     *,
     max_retries: int = 4,
     retry_backoff_seconds: float = 1.0,
+    max_retry_delay_seconds: float = 60.0,
 ) -> Dict:
     """Fetch JSON with bounded retries for temporary FOIA.gov failures."""
     for attempt in range(max_retries + 1):
@@ -70,6 +102,7 @@ def fetch_json(
                     resp,
                     attempt,
                     retry_backoff_seconds,
+                    max_retry_delay_seconds,
                 )
                 logger.warning(
                     "FOIA.gov metadata request returned HTTP %s; retrying in %.1fs (%s/%s)",
