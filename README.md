@@ -137,7 +137,31 @@ python main.py restore-db \
   --destination data/recovered.db
 ```
 
-A restore verifies the B2 object metadata SHA-256 after decompression and then runs SQLite `quick_check` before making the recovery file available. Retention pruning requires permission to delete old objects; if the scoped key cannot delete, backup creation still succeeds and pruning is logged as a warning.
+A restore verifies the B2 object metadata SHA-256 after decompression and then runs SQLite `quick_check` before making the recovery file available.
+
+Backblaze B2 buckets are versioned by default. Backup retention therefore lists the concrete versions of expired backup objects and deletes them with explicit version IDs. A name-only S3 delete would create a delete marker while older object bytes remained stored. The B2 application key should therefore include `deleteFiles` in addition to list/read/write access. If pruning permissions are unavailable, backup creation still succeeds and the pruning failure is logged as a warning.
+
+### Live B2 acceptance test
+
+The repository includes a manual GitHub Actions workflow named **B2 live acceptance**. It does not contain credentials. Add these repository Actions secrets before running it:
+
+- `B2_KEY_ID`
+- `B2_APPLICATION_KEY`
+
+The workflow defaults to region `us-east-005` and endpoint `https://s3.us-east-005.backblazeb2.com`. A bucket-scoped application key is preferred; when the key is scoped to exactly one bucket, the test discovers that bucket name from Backblaze authorization. An optional bucket-name input is available for keys that can access multiple buckets.
+
+The live test validates the complete storage path:
+
+1. application-key authorization and capabilities
+2. content-addressed document upload and size verification
+3. private signed download
+4. SHA-256 deduplication without creating a second object version
+5. two SQLite backups with retention set to one
+6. permanent deletion of the expired backup version
+7. verified SQLite restore
+8. explicit version-ID cleanup of every acceptance-test object
+
+The workflow never prints the application key or signed download URL.
 
 ## Continuous-operation resilience
 
