@@ -59,11 +59,11 @@ def search_url(reading_room_url: str) -> str:
     return urljoin(reading_room_url, "SearchDocs.aspx")
 
 
-def folder_view_url(
+def document_download_url(
     reading_room_url: str,
     folder: PalFolder,
 ) -> str:
-    """Return the PAL folder page used by the public reading-room UI."""
+    """Return the binary download URL used by PAL's public Download action."""
     return urljoin(
         reading_room_url,
         (
@@ -123,14 +123,28 @@ def _normalize_date_from_row(anchor) -> Optional[str]:
     row = anchor.find_parent("tr")
     if row is None:
         return None
-    text = " ".join(row.stripped_strings)
-    match = DATE_RE.search(text)
-    if not match:
-        return None
+
+    cells = row.find_all(["td", "th"], recursive=False)
+    anchor_cell = anchor.find_parent(["td", "th"])
     try:
-        return datetime.strptime(match.group(1), "%m/%d/%Y").date().isoformat()
-    except ValueError:
-        return None
+        start_index = cells.index(anchor_cell) + 1
+    except (ValueError, AttributeError):
+        start_index = 0
+
+    # PAL result titles can contain event dates (not publication dates).
+    # Only inspect cells after the folder-name cell.
+    for cell in cells[start_index:]:
+        match = DATE_RE.search(" ".join(cell.stripped_strings))
+        if not match:
+            continue
+        try:
+            return datetime.strptime(
+                match.group(1),
+                "%m/%d/%Y",
+            ).date().isoformat()
+        except ValueError:
+            continue
+    return None
 
 
 def parse_search_page(html: str) -> PalSearchPage:
