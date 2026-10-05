@@ -39,6 +39,16 @@ The repository ignores `.env`.
 docker compose up -d --build
 ```
 
+On a fresh persistent volume, the web container automatically checks for the newest verified SQLite snapshot in B2 **before** FastAPI starts. If a snapshot exists, it restores that seeded corpus to `/data/foia_archive.db`. Existing non-empty local databases are never overwritten automatically.
+
+A bucket-scoped Backblaze application key can auto-discover its single allowed bucket, S3 endpoint, and region when those settings are not explicitly supplied. If the key can access multiple buckets, set `B2_BUCKET` explicitly.
+
+To disable first-boot restoration:
+
+```text
+FOIA_BOOTSTRAP_DB_FROM_B2=false
+```
+
 The public web service listens on:
 
 ```text
