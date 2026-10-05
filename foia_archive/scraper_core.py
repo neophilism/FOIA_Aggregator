@@ -296,11 +296,54 @@ def _published_date_from_context(anchor) -> Optional[str]:
     return None
 
 
+def _parse_utc_timestamp(value: Optional[str]) -> Optional[datetime]:
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except (TypeError, ValueError):
+        return None
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)
+
+
 def get_reading_rooms_to_crawl(config: Config, limit: Optional[int] = None):
     conn = get_connection(config.storage.get("db_path"))
-    rooms = list_reading_rooms(conn, limit=limit)
-    conn.close()
-    return rooms
+    try:
+        rooms = list_reading_rooms(conn, limit=limit)
+    finally:
+        conn.close()
+
+    cooldown_minutes = max(
+        0.0,
+        float(config.crawler.get("failed_source_retry_minutes", 60)),
+    )
+    if cooldown_minutes <= 0:
+        return rooms
+
+    now = datetime.now(timezone.utc)
+    eligible = []
+    skipped = 0
+    for room in rooms:
+        failed_at = _parse_utc_timestamp(room["last_error_at"])
+        if failed_at is not None:
+            age_minutes = max(
+                0.0,
+                (now - failed_at).total_seconds() / 60.0,
+            )
+            if age_minutes < cooldown_minutes:
+                skipped += 1
+                continue
+        eligible.append(room)
+
+    if skipped:
+        logger.info(
+            "Skipping %s recently failed reading rooms for %.1f-minute cooldown",
+            skipped,
+            cooldown_minutes,
+        )
+    return eligible
 
 
 def _is_http_url(url: str) -> bool:
