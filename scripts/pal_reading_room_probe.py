@@ -12,6 +12,8 @@ from urllib.parse import urljoin
 import requests
 from bs4 import BeautifulSoup
 
+from foia_archive.pal_adapter import SHOW_DOCS_RE
+
 
 TARGETS = {
     "air_force": "https://efoia.cce.af.mil/app/ReadingRoom.aspx",
@@ -141,7 +143,7 @@ def summarize(url: str) -> None:
                 "btnNextPrevClicked",
             ):
                 match = re.search(
-                    rf"function\\s+{function_name}\\s*\\([^)]*\\)\\s*\\{{",
+                    rf"function\s+{function_name}\s*\([^)]*\)\s*\{{",
                     result_body,
                     flags=re.IGNORECASE,
                 )
@@ -187,11 +189,7 @@ def summarize(url: str) -> None:
         show_links = []
         for link in result_soup.find_all("a", href=True):
             href = (link.get("href") or "").strip()
-            match = re.match(
-                r"""javascript:showDocs\\(['"](\\d+)['"],['"]([A-Za-z])['"]\\);?""",
-                href,
-                flags=re.IGNORECASE,
-            )
+            match = SHOW_DOCS_RE.match(href)
             if match:
                 show_links.append((match.group(1), match.group(2)))
         if show_links:
