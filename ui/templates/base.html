@@ -1,0 +1,31 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="description" content="{% block description %}Search released federal FOIA records across agencies, including extracted document text and OCR.{% endblock %}">
+  <title>{% block title %}FOIA Aggregator{% endblock %}</title>
+  <link rel="stylesheet" href="{{ url_for('static', path='app.css') }}">
+</head>
+<body>
+<header class="site-header">
+  <div class="header-inner">
+    <a class="brand" href="/">
+      <span class="brand-mark">FOIA</span>
+      <span>FOIA Aggregator</span>
+    </a>
+    <nav class="site-nav" aria-label="Primary navigation">
+      <a href="/">Search</a>
+      <a href="/about">About & coverage</a>
+    </nav>
+  </div>
+</header>
+
+<main class="page">
+  {% block content %}{% endblock %}
+  <footer class="footer">
+    Aggregated from official federal public-records sources. Every record retains its original source link and archive provenance.
+  </footer>
+</main>
+</body>
+</html>
