@@ -1,6 +1,7 @@
 """Resilient scheduler for continuous crawler operation."""
 from __future__ import annotations
 
+import math
 import time
 
 from .engine import run_once
@@ -19,7 +20,7 @@ def _positive_seconds(value, fallback: float) -> float:
         seconds = float(value)
     except (TypeError, ValueError):
         return fallback
-    if seconds <= 0:
+    if not math.isfinite(seconds) or seconds <= 0:
         return fallback
     return seconds
 
