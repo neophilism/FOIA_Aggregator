@@ -1,0 +1,131 @@
+name: Seed presentation corpus
+
+on:
+  workflow_dispatch:
+    inputs:
+      source_limit:
+        description: "Maximum official sources to crawl (breadth-first across agencies; 0 = all)"
+        required: true
+        default: "100"
+      max_docs_per_source:
+        description: "Maximum new/not-yet-archived records per source"
+        required: true
+        default: "1"
+      max_pages_per_source:
+        description: "Maximum pages/resources visited per source"
+        required: true
+        default: "3"
+      max_depth:
+        description: "Maximum navigation depth within each reading room"
+        required: true
+        default: "1"
+
+concurrency:
+  group: seed-presentation-corpus
+  cancel-in-progress: false
+
+jobs:
+  seed:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 120
+    env:
+      PYTHONPATH: .
+      B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+      B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+      FOIA_STORAGE_BACKEND: b2
+      FOIA_DB_PATH: data/foia_archive.db
+      FOIA_FILES_DIR: data/files
+      B2_MAX_ARCHIVE_BYTES: "9000000000"
+      FOIA_CRAWLER_DRY_RUN: "false"
+      FOIA_SOURCE_LIMIT: ${{ inputs.source_limit }}
+      FOIA_MAX_DOCS_PER_SOURCE: ${{ inputs.max_docs_per_source }}
+      FOIA_MAX_PAGES_PER_SOURCE: ${{ inputs.max_pages_per_source }}
+      FOIA_MAX_DEPTH: ${{ inputs.max_depth }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Verify Backblaze secrets
+        shell: bash
+        run: |
+          missing=0
+          for name in B2_KEY_ID B2_APPLICATION_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Missing repository secret: $name"
+              missing=1
+            fi
+          done
+          exit "$missing"
+
+      - name: Install Tesseract
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Resolve FOIA.gov API key
+        env:
+          REPO_FOIA_API_KEY: ${{ secrets.FOIA_API_KEY }}
+        run: |
+          if [ -n "$REPO_FOIA_API_KEY" ]; then
+            echo "::add-mask::$REPO_FOIA_API_KEY"
+            echo "FOIA_API_KEY=$REPO_FOIA_API_KEY" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          python - <<'PY'
+          import os
+          import re
+          import requests
+          from bs4 import BeautifulSoup
+
+          repo = requests.get(
+              "https://api.github.com/repos/usdoj/foia.gov",
+              timeout=30,
+          )
+          repo.raise_for_status()
+          default_branch = repo.json()["default_branch"]
+
+          spec = requests.get(
+              f"https://raw.githubusercontent.com/usdoj/foia.gov/{default_branch}/swagger.json",
+              timeout=30,
+          )
+          spec.raise_for_status()
+          description = spec.json()["info"]["description"]
+          text = BeautifulSoup(description, "html.parser").get_text(" ", strip=True)
+          match = re.search(
+              r"use\\s+the\\s+following\\s+api[_ -]?key\\s+for\\s+testing\\.?\\s*([A-Za-z0-9_-]{20,})",
+              text,
+              flags=re.IGNORECASE,
+          )
+          if not match:
+              raise SystemExit(
+                  "Could not recover FOIA.gov's published testing API key "
+                  "from the first-party Swagger specification."
+              )
+
+          api_key = match.group(1)
+          print(f"::add-mask::{api_key}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"FOIA_API_KEY={api_key}\\n")
+          PY
+
+      - name: Seed or extend presentation corpus
+        run: python scripts/seed_presentation_corpus.py
+
+      - name: Preserve crawl logs and database for debugging
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: presentation-corpus-run-${{ github.run_id }}
+          path: |
+            data/foia_archive.db
+          if-no-files-found: ignore
+          retention-days: 7

@@ -1,0 +1,43 @@
+services:
+  web:
+    build: .
+    env_file:
+      - .env
+    environment:
+      FOIA_DB_PATH: /data/foia_archive.db
+      FOIA_FILES_DIR: /data/files
+      FOIA_STORAGE_BACKEND: b2
+      PORT: "8000"
+    volumes:
+      - foia_data:/data
+    ports:
+      - "8000:8000"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8000/healthz || exit 1"]
+      interval: 30s
+      timeout: 5s
+      start_period: 20s
+      retries: 3
+
+  crawler:
+    build: .
+    command: ["python", "main.py", "daemon"]
+    env_file:
+      - .env
+    environment:
+      FOIA_DB_PATH: /data/foia_archive.db
+      FOIA_FILES_DIR: /data/files
+      FOIA_STORAGE_BACKEND: b2
+      FOIA_CRAWLER_DRY_RUN: "${FOIA_CRAWLER_DRY_RUN:-false}"
+      FOIA_MAX_DOCS_PER_SOURCE: "${FOIA_MAX_DOCS_PER_SOURCE:-1}"
+      FOIA_CRAWLER_INTERVAL_HOURS: "${FOIA_CRAWLER_INTERVAL_HOURS:-6}"
+    volumes:
+      - foia_data:/data
+    restart: unless-stopped
+    depends_on:
+      web:
+        condition: service_healthy
+
+volumes:
+  foia_data:

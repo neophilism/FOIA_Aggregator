@@ -2,20 +2,43 @@ name: tests
 
 on:
   push:
+    branches:
+      - main
   pull_request:
 
 jobs:
   unittest:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
+
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
           cache: pip
-      - run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
-      - run: python -m pip install --upgrade pip
-      - run: pip install -r requirements.txt
-      - run: python -c "import pytesseract; print(pytesseract.get_tesseract_version())"
-      - run: python -m unittest discover -s tests -v
-      - run: python -m compileall -q foia_archive tests
+
+      - name: Install Tesseract
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
+
+      - name: Upgrade pip
+        run: python -m pip install --upgrade pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify Tesseract
+        run: python -c "import pytesseract; print(pytesseract.get_tesseract_version())"
+
+      - name: Run unit tests
+        run: python -m unittest discover -s tests -v
+
+      - name: Compile Python packages
+        run: python -m compileall -q foia_archive tests
+
+      - name: Validate compose configuration
+        run: |
+          cp .env.example .env
+          docker compose config
+
+      - name: Build production image
+        run: docker build -t foia-aggregator:test .

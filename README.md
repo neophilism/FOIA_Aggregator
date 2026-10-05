@@ -20,17 +20,19 @@ export FOIA_API_KEY="MY_KEY"
 
 ## CLI Usage
 
-Run a discovery-only crawl. Dry-run records discovered document metadata without downloading files and limits newly discovered documents per reading room:
+Run a discovery-only crawl. Dry-run records discovered document metadata without downloading files:
 
 ```bash
 python main.py run --dry-run true --max-docs-per-source 10
 ```
 
-Run a live crawl to download documents. Documents previously discovered during a dry run remain eligible for download:
+Run a bounded live crawl to download documents. Documents previously discovered during a dry run remain eligible for download:
 
 ```bash
-python main.py run --dry-run false
+python main.py run --dry-run false --max-docs-per-source 10
 ```
+
+`max_docs_per_source` is a safety ceiling in both dry-run and live mode. In live mode it counts new or not-yet-archived candidates; already archived records do not consume the quota, so repeated bounded cycles continue advancing through a source.
 
 Continuous mode:
 
@@ -291,6 +293,22 @@ The public UI is presentation-oriented rather than a database table. It includes
 The homepage statistics are not hard-coded; they report the current database's agencies, active official sources, discovered records, archived records, full-text searchable records, and OCR-assisted records. Search snippets use SQLite FTS5's bounded `snippet()` function so a results page does not load entire indexed documents into memory.
 
 Pagination removes the former silent 200-result ceiling. Full-text search uses SQLite FTS5 while the existing title/filename substring behavior remains available through the same search field.
+
+## Containerized presentation deployment
+
+The repository includes a provider-neutral Docker deployment with separate web and crawler services sharing a persistent local SQLite volume while document binaries live in private Backblaze B2.
+
+Quick start:
+
+```bash
+cp .env.example .env
+# Fill in FOIA_API_KEY and B2 credentials.
+docker compose up -d --build
+```
+
+The web service exposes `/healthz` for deployment health checks. The default demo crawler is live but intentionally conservative: one new/not-yet-archived record per source per six-hour cycle. Already archived records do not consume that quota, so repeated cycles expand the corpus gradually.
+
+See `docs/PRESENTATION_DEPLOYMENT.md` for deployment requirements, initial corpus guidance, backup checks, and the presentation acceptance checklist.
 
 ## Future scope: international access-to-information systems
 
