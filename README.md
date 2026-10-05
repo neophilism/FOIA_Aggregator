@@ -80,6 +80,24 @@ Document downloads are limited to public HTTP(S) destinations. Redirects are rev
 
 Successful downloads record MIME type, file size, and SHA-256 integrity metadata. Failed attempts retain a classified status and error message for later inspection/retry.
 
+## Continuous-operation resilience
+
+The `daemon` command is designed to stay alive across ordinary application and network failures.
+
+- startup/config errors are caught by the daemon supervisor and retried after `crawler.daemon_error_retry_seconds`
+- one unexpected reading-room exception does not stop later sources
+- unexpected per-source failures are persisted so the source enters cooldown
+- recently failed sources are skipped for `crawler.failed_source_retry_minutes` before being tried again
+- SQLite/database infrastructure failures abort only the current cycle and trigger daemon backoff instead of generating hundreds of repeated source failures
+- source crawl database connections are closed in `finally` blocks even when parser/storage code raises
+- failed document downloads have their own retry cooldowns; permanent-style failures such as blocked URLs, oversized files, and HTML/content mismatches use a longer cooldown
+- FOIA.gov metadata refresh cadence is independent of crawl cadence, so rapid crawl cycles do not repeatedly hit FOIA.gov
+- metadata failures use a shorter controlled retry cadence while the crawler continues with the last known source set
+- malformed/non-finite cadence values fall back to safe defaults rather than terminating the process
+- `KeyboardInterrupt` and normal process-termination semantics are intentionally not swallowed
+
+Application-level resilience cannot recover from process-external failures such as SIGKILL, host reboot, kernel OOM termination, or catastrophic filesystem/database corruption. Production deployment should therefore also use an external process supervisor (for example systemd or a container restart policy) so the process itself is restarted if the operating system terminates it.
+
 ## Database durability
 
 The archive uses SQLite WAL mode, a busy timeout, and enforced foreign keys on application connections. Schema upgrades are recorded in `schema_migrations` and applied automatically by `init_db()`; existing archives do not need to be deleted when new migrations are added.
