@@ -71,17 +71,24 @@ def summarize(url: str) -> None:
                 label = " ".join(parent.stripped_strings)
                 label = re.sub(r"\s+", " ", label)[:180]
 
-        print(
-            "CONTROL",
-            {
-                "tag": kind,
-                "type": input_type,
-                "name": name,
-                "id": element_id,
-                "value": value,
-                "label": label,
-            },
-        )
+        payload = {
+            "tag": kind,
+            "type": input_type,
+            "name": name,
+            "id": element_id,
+            "value": value,
+            "label": label,
+        }
+        if input_type == "checkbox":
+            payload["attrs"] = dict(element.attrs)
+            row = element.find_parent("tr")
+            if row is not None:
+                payload["row"] = re.sub(
+                    r"\\s+",
+                    " ",
+                    str(row),
+                )[:1200]
+        print("CONTROL", payload)
 
     for script in soup.find_all("script"):
         src = script.get("src")
@@ -94,7 +101,21 @@ def summarize(url: str) -> None:
         lower = body.lower()
         fn_index = lower.find("function fnsearch")
         if fn_index >= 0:
-            print("FNSEARCH_BLOCK", body[fn_index:fn_index + 7000])
+            fn_block = body[fn_index:fn_index + 14000]
+            print("FNSEARCH_BLOCK", fn_block)
+            for line in fn_block.splitlines():
+                if any(
+                    token in line
+                    for token in (
+                        "doctypes",
+                        "filename",
+                        "sdate",
+                        "edate",
+                        "content =",
+                        "hidDocTypes",
+                    )
+                ):
+                    print("SEARCH_ASSIGNMENT", line.strip())
         params_match = re.search(
             r"var\\s+searchParams\\s*=\\s*\\{.*?\\};",
             body,
