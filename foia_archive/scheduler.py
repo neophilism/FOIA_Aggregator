@@ -29,9 +29,12 @@ def _scheduler_timings(
 ) -> tuple[float, float, float, float]:
     """Return crawl, failed-cycle, metadata, and metadata-failure delays."""
     cfg = load_config(config_path)
-    interval_seconds = _positive_seconds(
-        float(cfg.crawler.get("interval_hours", DEFAULT_INTERVAL_HOURS)) * 3600,
-        DEFAULT_INTERVAL_HOURS * 3600,
+    interval_seconds = (
+        _positive_seconds(
+            cfg.crawler.get("interval_hours", DEFAULT_INTERVAL_HOURS),
+            DEFAULT_INTERVAL_HOURS,
+        )
+        * 3600
     )
     error_retry_seconds = _positive_seconds(
         cfg.crawler.get(
@@ -40,23 +43,25 @@ def _scheduler_timings(
         ),
         DEFAULT_ERROR_RETRY_SECONDS,
     )
-    metadata_refresh_seconds = _positive_seconds(
-        float(
+    metadata_refresh_seconds = (
+        _positive_seconds(
             cfg.foia_hub.get(
                 "refresh_interval_minutes",
                 DEFAULT_METADATA_REFRESH_MINUTES,
-            )
-        ) * 60,
-        DEFAULT_METADATA_REFRESH_MINUTES * 60,
+            ),
+            DEFAULT_METADATA_REFRESH_MINUTES,
+        )
+        * 60
     )
-    metadata_failure_retry_seconds = _positive_seconds(
-        float(
+    metadata_failure_retry_seconds = (
+        _positive_seconds(
             cfg.foia_hub.get(
                 "failure_retry_minutes",
                 DEFAULT_METADATA_FAILURE_RETRY_MINUTES,
-            )
-        ) * 60,
-        DEFAULT_METADATA_FAILURE_RETRY_MINUTES * 60,
+            ),
+            DEFAULT_METADATA_FAILURE_RETRY_MINUTES,
+        )
+        * 60
     )
     return (
         max(MINIMUM_SLEEP_SECONDS, interval_seconds),
