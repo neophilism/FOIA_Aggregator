@@ -2,6 +2,8 @@ crawler:
   dry_run: true
   max_docs_per_source: 10
   interval_hours: 6
+  daemon_error_retry_seconds: 60
+  failed_source_retry_minutes: 60
   max_pages_per_source: 50
   max_depth: 3
   max_discovered_docs_per_source: 1000
