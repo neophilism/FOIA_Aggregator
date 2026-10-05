@@ -362,6 +362,85 @@ class SourceProbeTests(unittest.TestCase):
         self.assertEqual(request.call_count, 2)
         retry_sleep.assert_called_once()
 
+    def test_historical_agency_is_excluded_from_current_unreachable_summary(self):
+        census = {
+            "summary": {},
+            "components": [
+                {
+                    "agency_name": "Historical Agency",
+                    "historical_note": "terminated",
+                },
+                {
+                    "agency_name": "Current Agency",
+                    "historical_note": None,
+                },
+            ],
+            "source_instances": [
+                {
+                    "agency_id": "old",
+                    "agency_name": "Historical Agency",
+                    "component_id": "old",
+                    "component_name": "Old",
+                    "source_type": "reading_room",
+                    "url": "https://old.example/",
+                },
+                {
+                    "agency_id": "current",
+                    "agency_name": "Current Agency",
+                    "component_id": "current",
+                    "component_name": "Current",
+                    "source_type": "reading_room",
+                    "url": "https://current.example/",
+                },
+            ],
+            "ignored_url_field_counts": {},
+            "candidate_ignored_field_counts": {},
+            "intelligence_community": [],
+        }
+        probes = {
+            "https://old.example/": ProbeResult(
+                url="https://old.example/",
+                final_url=None,
+                category="request_error",
+                status_code=None,
+                mime_type=None,
+                direct_document_links=0,
+                crawlable_page_links=0,
+                adapter_hints=(),
+                error="retired",
+            ),
+            "https://current.example/": ProbeResult(
+                url="https://current.example/",
+                final_url="https://current.example/",
+                category="document_producing",
+                status_code=200,
+                mime_type="text/html",
+                direct_document_links=1,
+                crawlable_page_links=1,
+                adapter_hints=(),
+                error=None,
+            ),
+        }
+
+        enriched = attach_probe_results(census, probes)
+
+        self.assertEqual(
+            enriched["probe_summary"]["historical_agencies_with_sources"],
+            1,
+        )
+        self.assertEqual(
+            enriched["probe_summary"]["current_agencies_with_sources"],
+            1,
+        )
+        self.assertEqual(
+            enriched["probe_summary"]["agencies_without_reachable_source"],
+            0,
+        )
+        self.assertEqual(
+            enriched["probe_summary"]["agencies_without_reachable_source_names"],
+            [],
+        )
+
     def test_attach_probe_results_counts_categories(self):
         census = {
             "summary": {},
