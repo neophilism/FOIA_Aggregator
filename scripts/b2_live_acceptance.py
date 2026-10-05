@@ -47,6 +47,11 @@ def _authorize(key_id: str, application_key: str) -> dict:
         auth=(key_id, application_key),
         timeout=30,
     )
+    if response.status_code == 401:
+        raise RuntimeError(
+            "Backblaze rejected the application key credentials (HTTP 401). "
+            "Verify or rotate B2_KEY_ID and B2_APPLICATION_KEY."
+        )
     response.raise_for_status()
     return response.json()
 
