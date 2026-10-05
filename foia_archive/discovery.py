@@ -11,6 +11,7 @@ from urllib.parse import urlsplit, urlunsplit
 
 import requests
 
+from .intelligence_community_sources import normalized_ic_elements
 from .source_overrides import current_source_url, curated_sources_for_component
 from .storage import (
     deactivate_reading_rooms_not_seen,
@@ -466,6 +467,7 @@ def refresh_metadata(config: Config) -> None:
     agency_cache: Dict[str, int] = {}
     agency_lookup: Dict[str, Dict] = {a.get("id"): a for a in agencies + included_agencies}
     seen_source_count = 0
+    seen_source_urls: set[str] = set()
 
     # Persist agencies up front so component handling can link to them reliably.
     for agency in agencies:
@@ -521,6 +523,55 @@ def refresh_metadata(config: Config) -> None:
                 source_type=source["source_type"],
                 seen_at=refresh_seen_at,
             )
+            seen_source_urls.add(source["url"])
+            seen_source_count += 1
+
+    # FOIA.gov does not model every Intelligence Community element as its own
+    # agency component. Add verified supplemental IC roots only when the same
+    # URL was not already discovered above, so shared sources are crawled once.
+    for element in normalized_ic_elements():
+        agency_slug = slugify(element["parent_agency"])
+        agency_id = agency_cache.get(agency_slug)
+        if agency_id is None:
+            agency_id = upsert_agency(
+                conn,
+                agency_slug,
+                element["parent_agency"],
+                {
+                    "supplemental": True,
+                    "intelligence_community": True,
+                },
+            )
+            agency_cache[agency_slug] = agency_id
+
+        office_slug = f"ic-{element['slug']}"
+        office_id = upsert_office(
+            conn,
+            office_slug,
+            element["name"],
+            agency_id,
+            {
+                "supplemental": True,
+                "intelligence_community": True,
+                "element_slug": element["slug"],
+            },
+        )
+
+        for source in element["sources"]:
+            url = source["url"]
+            if url in seen_source_urls:
+                continue
+            upsert_reading_room(
+                conn,
+                url,
+                element["name"],
+                "office",
+                agency_id,
+                office_id,
+                source_type=f"ic_{source['mode']}",
+                seen_at=refresh_seen_at,
+            )
+            seen_source_urls.add(url)
             seen_source_count += 1
 
     if not components:
