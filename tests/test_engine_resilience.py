@@ -97,6 +97,25 @@ class EngineResilienceTests(unittest.TestCase):
         self.assertEqual(record_failure.call_args.args[1], 1)
 
 
+    def test_database_backup_failure_does_not_fail_crawl_cycle(self):
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch("foia_archive.engine.refresh_metadata"),
+            patch(
+                "foia_archive.engine.get_reading_rooms_to_crawl",
+                return_value=[],
+            ),
+            patch(
+                "foia_archive.engine.backup_database_to_b2",
+                side_effect=RuntimeError("B2 temporarily unavailable"),
+            ) as backup,
+        ):
+            metadata_ok = run_once()
+
+        self.assertTrue(metadata_ok)
+        backup.assert_called_once_with(self.config)
+
     def test_database_failure_aborts_cycle_for_daemon_backoff(self):
         rooms = [{"id": 1}, {"id": 2}]
         with (
