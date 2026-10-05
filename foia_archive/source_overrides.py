@@ -159,6 +159,8 @@ SOURCE_URL_REPLACEMENTS: Dict[str, str] = {
     "http://www.nmb.gov/documents/press-contacts/reading-room-certificate.pdf": "https://nmb.gov/NMB_Application/index.php/foia/",
     "http://www.prc.gov/foia": "https://www.prc.gov/foia",
     "https://www.ibwc.gov/Organization/FOIA_RR.html": "https://www.ibwc.gov/foia/",
+    "https://osc.gov/Pages/FOIA-Resources.aspx": "https://www.osc.gov/about/foia/",
+    "https://www.restorethegulf.gov/resources/council-documents-foia-library": "https://www.restorethegulf.gov/resources/reports-plans",
 }
 
 
@@ -178,6 +180,22 @@ HISTORICAL_COMPONENTS: Dict[str, str] = {
     ),
     "b07c0cd6-dc80-4645-85fa-ae7e520fcb47": (
         "Special Inspector General for Iraq Reconstruction is a terminated office."
+    ),
+    "4de0da30-b524-4167-a32d-ccb7442fe13e": (
+        "National Commission on Military, National, and Public Service was a temporary "
+        "commission whose authorizing statute required termination within 36 months."
+    ),
+    "4656129a-68f0-4843-bf62-5f4b6c66525b": (
+        "National Security Commission on Artificial Intelligence was a temporary "
+        "commission whose statutory life ended in 2021."
+    ),
+    "48ce1125-6beb-4e16-9ccd-aee48cb41207": (
+        "Overseas Private Investment Corporation was replaced by the U.S. International "
+        "Development Finance Corporation in 2020."
+    ),
+    "3c760e1c-6c1d-4d0b-a227-0a0e14752674": (
+        "Special Inspector General for Afghanistan Reconstruction closed on "
+        "January 31, 2026."
     ),
 }
 
