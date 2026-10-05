@@ -1,6 +1,6 @@
 requests
 pyyaml
-typer[all]
+typer
 fastapi
 uvicorn
 jinja2
@@ -11,3 +11,4 @@ python-docx
 pypdfium2
 pytesseract
 Pillow
+fonttools
