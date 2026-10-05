@@ -276,6 +276,8 @@ def write_markdown(census: dict, path: Path) -> None:
         "",
         f"- FOIA.gov agencies returned: **{summary['agencies_returned']}**",
         f"- Agencies referenced by components: **{summary['agencies_referenced_by_components']}**",
+        f"- Agencies with ≥1 recognized publication source: **{summary['agencies_with_recognized_source']}**",
+        f"- Agencies with no recognized publication source: **{summary['agencies_without_recognized_source']}**",
         f"- Agency components: **{summary['components']}**",
         f"- Components with ≥1 recognized publication source: **{summary['components_with_recognized_source']}**",
         f"- Components with no recognized publication source: **{summary['components_without_recognized_source']}**",
@@ -288,6 +290,54 @@ def write_markdown(census: dict, path: Path) -> None:
     ]
     for source_type, count in summary["source_type_counts"].items():
         lines.append(f"- {source_type}: **{count}**")
+
+    agency_coverage: dict[str, dict] = {}
+    for row in census["components"]:
+        agency_key = row["agency_id"] or row["agency_name"]
+        entry = agency_coverage.setdefault(
+            agency_key,
+            {
+                "agency_name": row["agency_name"],
+                "components": 0,
+                "components_with_source": 0,
+            },
+        )
+        entry["components"] += 1
+        if row["recognized_source_count"] > 0:
+            entry["components_with_source"] += 1
+
+    agencies_without_source = sorted(
+        (
+            entry
+            for entry in agency_coverage.values()
+            if entry["components_with_source"] == 0
+        ),
+        key=lambda item: item["agency_name"].lower(),
+    )
+    lines.extend(
+        [
+            "",
+            "## Agencies with no recognized publication source",
+            "",
+            f"Total: **{len(agencies_without_source)}**",
+            "",
+        ]
+    )
+    if agencies_without_source:
+        lines.extend(
+            _markdown_table(
+                [
+                    [
+                        item["agency_name"],
+                        str(item["components"]),
+                    ]
+                    for item in agencies_without_source
+                ],
+                ["Agency", "Components"],
+            )
+        )
+    else:
+        lines.append("None.")
 
     probe_summary = census.get("probe_summary")
     if probe_summary:
@@ -422,6 +472,7 @@ def write_markdown(census: dict, path: Path) -> None:
             "http_error",
             "request_error",
             "blocked_by_safety",
+            "probe_page_too_large",
             "probe_error",
             "adapter_candidate",
         }
