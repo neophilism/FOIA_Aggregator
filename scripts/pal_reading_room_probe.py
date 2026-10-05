@@ -164,6 +164,68 @@ def summarize(url: str) -> None:
                     for option in page_index.find_all("option")
                 ][:30],
             )
+        result_script_sources = [
+            urljoin(search_url, script.get("src"))
+            for script in result_soup.find_all("script", src=True)
+        ]
+        if result_script_sources:
+            print("RESULT_SCRIPT_SOURCES", result_script_sources)
+
+        aspx_refs = sorted(
+            set(
+                match.group(1)
+                for match in re.finditer(
+                    r"""["']([^"']+\\.aspx[^"']*)["']""",
+                    search_response.text,
+                    flags=re.IGNORECASE,
+                )
+            )
+        )
+        if aspx_refs:
+            print("RESULT_ASPX_REFS", aspx_refs[:80])
+
+        show_links = []
+        for link in result_soup.find_all("a", href=True):
+            href = (link.get("href") or "").strip()
+            match = re.match(
+                r"""javascript:showDocs\\(['"](\\d+)['"],['"]([A-Za-z])['"]\\);?""",
+                href,
+                flags=re.IGNORECASE,
+            )
+            if match:
+                show_links.append((match.group(1), match.group(2)))
+        if show_links:
+            first_id, first_kind = show_links[0]
+            folder_url = urljoin(
+                search_url,
+                f"AddAttachment.aspx?docid={first_id}&ispaldoc={first_kind}",
+            )
+            folder_response = session.get(
+                folder_url,
+                timeout=45,
+                headers={
+                    "User-Agent": "FOIAArchiveBot/0.1 diagnostic",
+                    "Referer": response.url,
+                },
+            )
+            print("FOLDER_URL", folder_url)
+            print("FOLDER_STATUS", folder_response.status_code)
+            print("FOLDER_FINAL", folder_response.url)
+            print("FOLDER_LENGTH", len(folder_response.content))
+            print("FOLDER_CONTENT_TYPE", folder_response.headers.get("Content-Type"))
+            if folder_response.status_code == 200:
+                folder_soup = BeautifulSoup(folder_response.text, "html.parser")
+                for folder_link in folder_soup.find_all("a", href=True)[:80]:
+                    print(
+                        "FOLDER_LINK",
+                        {
+                            "href": urljoin(folder_response.url, folder_link.get("href")),
+                            "text": " ".join(folder_link.stripped_strings)[:300],
+                            "title": folder_link.get("title"),
+                            "onclick": (folder_link.get("onclick") or "")[:500],
+                        },
+                    )
+
         for link in result_soup.find_all("a", href=True)[:60]:
             print(
                 "RESULT_LINK",
