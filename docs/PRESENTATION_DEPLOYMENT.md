@@ -94,7 +94,53 @@ docker compose up -d crawler
 
 The B2 application-level safety ceiling remains 9,000,000,000 bytes unless explicitly changed.
 
-## 4. Watch ingestion
+## 4. Seed a corpus without paying for a server
+
+The repository also includes the manual GitHub Actions workflow:
+
+```text
+Seed presentation corpus
+```
+
+This is useful before a public host exists. The workflow uses repository secrets, runs one bounded live crawl on a GitHub-hosted runner, stores document binaries in B2, and forces a verified SQLite snapshot back to B2 at the end.
+
+Required repository Actions secrets:
+
+```text
+FOIA_API_KEY
+B2_KEY_ID
+B2_APPLICATION_KEY
+```
+
+The bucket name does not need to be stored as a secret when the B2 application key is scoped to exactly one bucket; the seeder discovers that bucket from Backblaze authorization.
+
+Default seed bounds:
+
+```text
+source_limit=100
+max_docs_per_source=1
+max_pages_per_source=3
+max_depth=1
+```
+
+Bounded source selection prefers one eligible source per agency before selecting additional sources from the same agency. This gives the initial presentation corpus cross-agency breadth.
+
+Each seed run:
+
+1. authenticates to Backblaze without printing credentials;
+2. restores the newest verified SQLite backup when one exists;
+3. refreshes official source metadata;
+4. runs the bounded live crawl;
+5. extracts native text and bounded OCR;
+6. archives binaries in private B2;
+7. forces a fresh verified SQLite backup;
+8. prints live corpus statistics into the GitHub Actions job summary.
+
+The workflow also keeps the runner's SQLite database as a short-lived Actions artifact for debugging. B2 remains the durable copy.
+
+After the first run, the same workflow can be run again to add depth. Already archived records do not consume the per-source document quota.
+
+## 5. Watch ingestion
 
 Crawler logs:
 
@@ -117,7 +163,7 @@ The homepage statistics provide a quick presentation-readiness check:
 
 The About page provides additional archive/search counts.
 
-## 5. Backup verification
+## 6. Backup verification
 
 The crawler automatically creates B2 SQLite snapshots according to the configured backup interval.
 
@@ -135,7 +181,7 @@ docker compose exec web python main.py restore-db
 
 Do not replace the live database during an ordinary demo rehearsal.
 
-## 6. Presentation acceptance checklist
+## 7. Presentation acceptance checklist
 
 Before sharing the public URL, verify all of the following from the deployed site:
 
@@ -153,7 +199,7 @@ Before sharing the public URL, verify all of the following from the deployed sit
 - mobile-width layout remains usable;
 - `/healthz` returns HTTP 200.
 
-## 7. Hosting requirements
+## 8. Hosting requirements
 
 A suitable demo host needs:
 
@@ -166,7 +212,7 @@ A suitable demo host needs:
 
 For the current SQLite architecture, run **one crawler** and preferably one web replica on the same persistent local volume. Horizontal multi-host scaling is intentionally deferred.
 
-## 8. Security after setup
+## 9. Security after setup
 
 Do not place B2 or FOIA.gov secrets in the image, repository, logs, or presentation materials.
 
