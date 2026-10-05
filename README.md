@@ -80,4 +80,14 @@ Start the FastAPI server (e.g., with uvicorn):
 uvicorn ui.server:app --reload
 ```
 
-Then open http://127.0.0.1:8000/ to filter and download stored documents.
+Then open http://127.0.0.1:8000/ to browse the archive.
+
+The MVP UI supports:
+- title/filename search
+- agency, office, file-type, and published-date filters
+- result counts and 25/50/100-row pagination
+- sorting by discovery date, publication date, or title
+- explicit download-status/error badges
+- direct archived-file and original-source links
+
+Pagination removes the former silent 200-result ceiling. Title search is metadata-only for the MVP; full document-body search/OCR remains a later phase.
