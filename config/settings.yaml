@@ -35,8 +35,16 @@ downloader:
 
 search:
   # Bound per-document indexed text so one unusually large release cannot
-  # dominate SQLite memory/disk. OCR can reuse the same ceiling later.
+  # dominate SQLite memory/disk.
   max_indexed_chars_per_document: 5000000
+
+ocr:
+  enabled: true
+  languages: "eng"
+  dpi: 200
+  max_pages_per_document: 50
+  page_timeout_seconds: 45
+  max_image_megapixels: 20
 
 database_backup:
   enabled: true
