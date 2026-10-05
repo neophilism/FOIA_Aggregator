@@ -1274,9 +1274,16 @@ def _process_document_candidate(
     if result.status == "downloaded" and result.path is not None:
         try:
             search_config = config.data.get("search") or {}
-            max_indexed_chars = int(
-                search_config.get("max_indexed_chars_per_document", 5_000_000)
-            )
+            try:
+                max_indexed_chars = int(
+                    search_config.get(
+                        "max_indexed_chars_per_document",
+                        5_000_000,
+                    )
+                )
+            except (TypeError, ValueError):
+                max_indexed_chars = 5_000_000
+            max_indexed_chars = max(1_000, max_indexed_chars)
             extraction = extract_document_text(
                 result.path,
                 file_type,
