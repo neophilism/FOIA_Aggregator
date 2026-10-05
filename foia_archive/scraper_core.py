@@ -26,6 +26,14 @@ from .archive_storage import (
     StorageQuotaReached,
     get_archive_storage,
 )
+from .pal_adapter import (
+    build_search_params,
+    cabinet_ids_from_page,
+    document_download_url,
+    is_pal_reading_room,
+    parse_search_page,
+    search_url as pal_search_url,
+)
 from .storage import (
     archived_remote_bytes,
     associate_document_source,
@@ -852,6 +860,98 @@ def _fetch_crawl_resource(
             raise
 
 
+def _fetch_pal_resource(
+    session,
+    method: str,
+    url: str,
+    config: Config,
+    rate_limiter: HostRateLimiter,
+    *,
+    data: Optional[dict[str, str]] = None,
+    referer: Optional[str] = None,
+):
+    """Fetch one known PAL endpoint without allowing unvalidated redirects."""
+    headers = {
+        "User-Agent": config.crawler.get(
+            "user_agent",
+            "FOIAArchiveBot/0.1",
+        )
+    }
+    if referer:
+        headers["Referer"] = referer
+    if method.upper() == "POST":
+        headers["X-Requested-With"] = "XMLHttpRequest"
+
+    timeout = float(config.crawler.get("page_timeout_seconds", 30))
+    max_retries = int(config.downloader.get("max_retries", 3))
+    backoff = float(config.downloader.get("retry_backoff_seconds", 1))
+    max_retry_delay = float(
+        config.downloader.get("max_retry_delay_seconds", 60)
+    )
+
+    for attempt in range(max_retries + 1):
+        response = None
+        try:
+            _validate_public_destination(url)
+            rate_limiter.wait(url)
+            response = session.request(
+                method.upper(),
+                url,
+                headers=headers,
+                data=data,
+                timeout=timeout,
+                stream=True,
+                allow_redirects=False,
+            )
+            status_code = getattr(response, "status_code", 200)
+            if status_code in REDIRECT_STATUS_CODES:
+                headers_map = getattr(response, "headers", {}) or {}
+                location = headers_map.get("Location") or headers_map.get("location")
+                raise requests.HTTPError(
+                    f"Unexpected redirect from PAL endpoint {url} to {location or 'unknown'}"
+                )
+            if status_code in RETRYABLE_STATUS_CODES:
+                headers_map = getattr(response, "headers", {}) or {}
+                retry_after = (
+                    headers_map.get("Retry-After")
+                    or headers_map.get("retry-after")
+                )
+                rate_limit_reset = (
+                    headers_map.get("X-RateLimit-Reset")
+                    or headers_map.get("x-ratelimit-reset")
+                    or headers_map.get("X-Rate-Limit-Reset")
+                )
+                _close_response(response)
+                response = None
+                if attempt < max_retries:
+                    _retry_sleep(
+                        attempt,
+                        backoff,
+                        retry_after=retry_after,
+                        rate_limit_reset=rate_limit_reset,
+                        max_delay_seconds=max_retry_delay,
+                    )
+                    continue
+                raise requests.HTTPError(
+                    f"HTTP {status_code} while crawling PAL endpoint {url}"
+                )
+            if not 200 <= status_code < 300:
+                raise requests.HTTPError(
+                    f"HTTP {status_code} while crawling PAL endpoint {url}"
+                )
+            return response, url
+        except (UnsafeURL, FileTooLarge):
+            raise
+        except (requests.RequestException, socket.gaierror):
+            if response is not None:
+                _close_response(response)
+                response = None
+            if attempt < max_retries:
+                _retry_sleep(attempt, backoff)
+                continue
+            raise
+
+
 def download_document(
     url: str,
     filename_hint: str,
@@ -1216,6 +1316,156 @@ def _process_document_candidate(
     return is_new
 
 
+def _crawl_pal_reading_room(
+    conn,
+    rr,
+    root_url: str,
+    config: Config,
+    dry_run: bool,
+    max_docs: Optional[int],
+    rate_limiter: HostRateLimiter,
+) -> None:
+    """Crawl an AINS/PAL reading room through its public AJAX search endpoint."""
+    max_pages = max(1, int(config.crawler.get("max_pages_per_source", 50)))
+    max_discovered_docs = max(
+        1,
+        int(config.crawler.get("max_discovered_docs_per_source", 1000)),
+    )
+    page_max_bytes = max(
+        1,
+        int(float(config.crawler.get("page_max_size_mb", 5)) * 1024 * 1024),
+    )
+
+    session = requests.Session()
+    seen_documents: Set[str] = set()
+    new_documents = 0
+    try:
+        root_response = None
+        try:
+            root_response, _ = _fetch_pal_resource(
+                session,
+                "GET",
+                root_url,
+                config,
+                rate_limiter,
+            )
+            root_html = _read_limited_text(root_response, page_max_bytes)
+        finally:
+            if root_response is not None:
+                _close_response(root_response)
+
+        cabinet_ids = cabinet_ids_from_page(root_html)
+        if not cabinet_ids:
+            raise ValueError("PAL reading room exposed no public cabinet IDs")
+
+        endpoint = pal_search_url(root_url)
+        page_index = 0
+        total_pages = 1
+        while page_index < min(total_pages, max_pages):
+            response = None
+            try:
+                response, _ = _fetch_pal_resource(
+                    session,
+                    "POST",
+                    endpoint,
+                    config,
+                    rate_limiter,
+                    data=build_search_params(
+                        cabinet_ids,
+                        page_index=page_index,
+                    ),
+                    referer=root_url,
+                )
+                html = _read_limited_text(response, page_max_bytes)
+                page = parse_search_page(html)
+            except Exception:
+                if page_index == 0:
+                    raise
+                logger.warning(
+                    "PAL search page %s failed for %s; preserving partial crawl",
+                    page_index + 1,
+                    root_url,
+                    exc_info=True,
+                )
+                break
+            finally:
+                if response is not None:
+                    _close_response(response)
+
+            if page_index == 0:
+                total_pages = max(1, page.total_pages)
+
+            for folder in page.folders:
+                candidate_url = canonicalize_url(
+                    document_download_url(root_url, folder)
+                )
+                if not candidate_url or candidate_url in seen_documents:
+                    continue
+                if len(seen_documents) >= max_discovered_docs:
+                    logger.info(
+                        "PAL document safety limit reached for %s after %s candidates",
+                        root_url,
+                        len(seen_documents),
+                    )
+                    record_reading_room_crawl_success(
+                        conn,
+                        rr["id"],
+                        datetime.utcnow().isoformat(),
+                    )
+                    return
+                if dry_run and max_docs is not None and new_documents >= max_docs:
+                    logger.info("Dry run document limit reached for %s", root_url)
+                    record_reading_room_crawl_success(
+                        conn,
+                        rr["id"],
+                        datetime.utcnow().isoformat(),
+                    )
+                    return
+
+                seen_documents.add(candidate_url)
+                is_new = _process_document_candidate(
+                    conn,
+                    rr,
+                    candidate_url,
+                    folder.title,
+                    folder.published_date,
+                    "pdf",
+                    config,
+                    dry_run,
+                    rate_limiter,
+                )
+                if is_new:
+                    new_documents += 1
+
+            page_index += 1
+
+        if total_pages > max_pages:
+            logger.info(
+                "PAL page limit reached for %s after %s of %s search pages",
+                root_url,
+                max_pages,
+                total_pages,
+            )
+
+        record_reading_room_crawl_success(
+            conn,
+            rr["id"],
+            datetime.utcnow().isoformat(),
+        )
+    except Exception as exc:
+        attempted_at = datetime.utcnow().isoformat()
+        error = f"{type(exc).__name__}: {exc}"[:2000]
+        logger.warning("Failed to crawl PAL reading room %s: %s", root_url, exc)
+        record_reading_room_crawl_failure(
+            conn,
+            rr["id"],
+            attempted_at,
+            error,
+        )
+    finally:
+        session.close()
+
+
 def _crawl_reading_room_with_connection(
     conn,
     rr_id: int,
@@ -1247,6 +1497,18 @@ def _crawl_reading_room_with_connection(
         rate_limiter = HostRateLimiter(
             float(config.crawler.get("per_host_delay_seconds", 0))
         )
+
+    if is_pal_reading_room(root_url):
+        _crawl_pal_reading_room(
+            conn,
+            rr,
+            root_url,
+            config,
+            dry_run,
+            max_docs,
+            rate_limiter,
+        )
+        return
 
     max_pages = max(1, int(config.crawler.get("max_pages_per_source", 50)))
     max_depth = max(0, int(config.crawler.get("max_depth", 3)))
