@@ -75,7 +75,7 @@ jobs:
           --probe-workers 12
           --probe-timeout 12
           --probe-delay 0.25
-          --max-html-kb 256
+          --max-html-kb 1024
           --output-dir source-census-results
 
       - name: Upload census reports
