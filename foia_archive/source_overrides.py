@@ -141,6 +141,24 @@ CURATED_COMPONENT_SOURCES: Dict[str, List[CuratedSource]] = {
 }
 
 
+# FOIA.gov sometimes retains an obsolete URL after an agency has moved its
+# reading room. Normalize only replacements verified against the agency's
+# current official site; this avoids crawling both stale and current copies.
+SOURCE_URL_REPLACEMENTS: Dict[str, str] = {
+    "https://www.cia.gov/library/readingroom/": "https://www.cia.gov/readingroom/",
+    "https://www.cia.gov/library/readingroom/what-electronic-reading-room": "https://www.cia.gov/readingroom/",
+    "http://www.dia.mil/FOIA/FOIA-Electronic-Reading-Room/": "https://www.dia.mil/FOIA/FOIA-Electronic-Reading-Room/",
+    "https://www.rmda.army.mil/readingroom/": "https://foia.army.mil/",
+    "http://www.dcms.uscg.mil/Our-Organization/Assistant-Commandant-for-C4IT-CG-6/The-Office-of-Information-Management-CG-61/FOIA-Library/": "https://www.dcms.uscg.mil/Our-Organization/Assistant-Commandant-for-C4IT-CG-6/The-Office-of-Information-Management-CG-61/FOIA-Library/",
+    "http://www.hqmc.marines.mil/Agencies/USMC-FOIA/USMC-FOIA-Reading-Room/": "https://www.hqmc.marines.mil/Agencies/USMC-FOIA/USMC-FOIA-Reading-Room/",
+    "http://www.secnav.navy.mil/foia/readingroom/SitePages/Home.aspx": "https://www.secnav.navy.mil/foia/readingroom/SitePages/Home.aspx",
+}
+
+
+def current_source_url(url: str) -> str:
+    return SOURCE_URL_REPLACEMENTS.get(url, url)
+
+
 # FOIA.gov still exposes these defunct agencies as agency components. They are
 # retained in the census for historical transparency but are not current source gaps.
 HISTORICAL_COMPONENTS: Dict[str, str] = {
