@@ -565,6 +565,49 @@ class MetadataRefreshTests(unittest.TestCase):
 
         self.assertEqual(active, 1)
 
+    def test_curated_source_is_used_when_metadata_has_no_source(self):
+        components = [
+            {
+                "id": "c1efb796-3bb7-4747-a8b7-415992834318",
+                "attributes": {
+                    "title": "U.S. Election Assistance Commission",
+                    "website": {"uri": "https://www.eac.gov/"},
+                },
+                "relationships": {
+                    "agency": {"data": {"id": "agency-id"}},
+                },
+            }
+        ]
+
+        with (
+            patch(
+                "foia_archive.discovery.fetch_agencies",
+                return_value=self.agencies,
+            ),
+            patch(
+                "foia_archive.discovery.fetch_agency_components",
+                return_value=(components, self.agencies),
+            ),
+        ):
+            refresh_metadata(self.config)
+
+        conn = get_connection(self.db_path)
+        try:
+            row = conn.execute(
+                """
+                SELECT url, source_type, active
+                FROM reading_rooms
+                WHERE url = ?
+                """,
+                ("https://www.eac.gov/foia/foia-reading-room",),
+            ).fetchone()
+        finally:
+            conn.close()
+
+        self.assertIsNotNone(row)
+        self.assertEqual(row["source_type"], "curated_foia")
+        self.assertEqual(row["active"], 1)
+
     def test_schema_drift_returning_zero_sources_preserves_active_set(self):
         conn = get_connection(self.db_path)
         conn.execute(
