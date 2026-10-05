@@ -1,0 +1,139 @@
+{% extends "base.html" %}
+
+{% block title %}{{ document.title or document.filename or 'Record' }} — FOIA Aggregator{% endblock %}
+
+{% block description %}Archived federal public record with source provenance, file metadata, and searchable text information.{% endblock %}
+
+{% block content %}
+<a class="back-link" href="/">← Back to search</a>
+
+<section class="record-header">
+  <p class="eyebrow">{{ document.agency_name or 'Federal public record' }}</p>
+  <h1>{{ document.title or document.filename or 'Untitled record' }}</h1>
+  <p class="record-subtitle">
+    {% if document.office_name %}{{ document.office_name }} · {% endif %}
+    {{ (document.file_type or 'unknown')|upper }}
+    {% if document.published_date %} · Published {{ document.published_date }}{% endif %}
+  </p>
+
+  <div class="record-actions">
+    {% if document.storage_key or document.local_path %}
+      <a class="button" href="/archive/{{ document.id }}" target="_blank" rel="noopener">Open archived copy</a>
+    {% endif %}
+    {% if document.url %}
+      <a class="button secondary" href="{{ document.url }}" target="_blank" rel="noopener noreferrer">Open original source</a>
+    {% endif %}
+  </div>
+</section>
+
+<div class="detail-grid">
+  <div>
+    <section class="panel">
+      <h2>Record details</h2>
+      <dl class="metadata">
+        <div>
+          <dt>Agency</dt>
+          <dd>{{ document.agency_name or 'Unknown' }}</dd>
+        </div>
+        <div>
+          <dt>Office</dt>
+          <dd>{{ document.office_name or 'Unknown' }}</dd>
+        </div>
+        <div>
+          <dt>Published</dt>
+          <dd>{{ document.published_date or 'Unknown' }}</dd>
+        </div>
+        <div>
+          <dt>Discovered</dt>
+          <dd>{{ document.discovered_at or 'Unknown' }}</dd>
+        </div>
+        <div>
+          <dt>File type</dt>
+          <dd>{{ (document.file_type or 'Unknown')|upper }}</dd>
+        </div>
+        <div>
+          <dt>File size</dt>
+          <dd>{{ document.file_size|filesize }}</dd>
+        </div>
+        <div>
+          <dt>Archive status</dt>
+          <dd>{{ (document.download_status or 'pending').replace('_', ' ')|title }}</dd>
+        </div>
+        <div>
+          <dt>Storage</dt>
+          <dd>{{ (document.storage_backend or 'local')|upper }}</dd>
+        </div>
+        {% if document.sha256 %}
+        <div style="grid-column: 1 / -1;">
+          <dt>SHA-256</dt>
+          <dd>{{ document.sha256 }}</dd>
+        </div>
+        {% endif %}
+      </dl>
+    </section>
+
+    <section class="panel">
+      <h2>Searchable text</h2>
+      {% if document.text_preview %}
+        <p class="results-meta">
+          Indexed via
+          {% if document.extraction_method == 'ocr' %}
+            OCR
+          {% elif document.extraction_method == 'mixed' %}
+            native text + OCR
+          {% elif document.extraction_method == 'native_text' %}
+            native document text
+          {% else %}
+            text extraction
+          {% endif %}
+          {% if document.character_count %} · {{ "{:,}".format(document.character_count) }} characters indexed{% endif %}
+          {% if document.truncated %} · index truncated by safety limit{% endif %}
+        </p>
+        <div class="text-preview">{{ document.text_preview }}</div>
+      {% else %}
+        <div class="empty-state">
+          <h3>No searchable text is available for this record.</h3>
+          <div>
+            Extraction status: {{ (document.extraction_status or 'not indexed').replace('_', ' ')|title }}.
+            {% if document.extraction_error %}{{ document.extraction_error }}{% endif %}
+          </div>
+        </div>
+      {% endif %}
+    </section>
+  </div>
+
+  <aside>
+    <section class="panel">
+      <h2>Source provenance</h2>
+      {% if sources %}
+        <ul class="provenance-list">
+          {% for source in sources %}
+          <li>
+            <a class="provenance-title" href="{{ source.url }}" target="_blank" rel="noopener noreferrer">
+              {{ source.label or source.url }}
+            </a>
+            <span class="provenance-meta">
+              {{ source.agency_name or 'Federal source' }}
+              {% if source.office_name %} · {{ source.office_name }}{% endif %}
+            </span>
+            {% if source.first_seen_at %}
+              <span class="provenance-meta">First seen {{ source.first_seen_at }}</span>
+            {% endif %}
+          </li>
+          {% endfor %}
+        </ul>
+      {% else %}
+        <p class="results-meta">No additional reading-room provenance has been recorded.</p>
+      {% endif %}
+    </section>
+
+    <section class="panel">
+      <h2>Why this matters</h2>
+      <p class="results-meta">
+        The archive preserves the released file while keeping a link back to the government's original source.
+        Search indexing is derived from the archived record; the source file remains authoritative.
+      </p>
+    </section>
+  </aside>
+</div>
+{% endblock %}

@@ -661,6 +661,175 @@ def query_documents(
     return conn.execute("\n".join(query), params).fetchall()
 
 
+def get_archive_stats(conn: sqlite3.Connection) -> Dict[str, int]:
+    """Return live, presentation-safe archive statistics."""
+    row = conn.execute(
+        """
+        SELECT
+            (SELECT COUNT(*) FROM agencies) AS agencies,
+            (SELECT COUNT(*) FROM offices) AS offices,
+            (
+                SELECT COUNT(*)
+                FROM reading_rooms
+                WHERE active = 1
+            ) AS active_sources,
+            (SELECT COUNT(*) FROM documents) AS records,
+            (
+                SELECT COUNT(*)
+                FROM documents
+                WHERE download_status = 'downloaded'
+            ) AS archived_records,
+            (
+                SELECT COUNT(*)
+                FROM document_text
+                WHERE extraction_status IN ('indexed', 'indexed_truncated')
+                  AND COALESCE(body, '') != ''
+            ) AS searchable_records,
+            (
+                SELECT COUNT(*)
+                FROM document_text
+                WHERE extraction_status IN ('indexed', 'indexed_truncated')
+                  AND extraction_method IN ('ocr', 'mixed')
+                  AND COALESCE(body, '') != ''
+            ) AS ocr_records
+        """
+    ).fetchone()
+    return {
+        key: int(row[key] or 0)
+        for key in (
+            "agencies",
+            "offices",
+            "active_sources",
+            "records",
+            "archived_records",
+            "searchable_records",
+            "ocr_records",
+        )
+    }
+
+
+def query_document_snippets(
+    conn: sqlite3.Connection,
+    document_ids: List[int],
+    title_query: Optional[str],
+    *,
+    tokens: int = 32,
+) -> Dict[int, str]:
+    """Return bounded FTS5 snippets for body-text matches on one result page."""
+    if not document_ids or not title_query:
+        return {}
+
+    fts_query = _fts5_query(title_query.strip())
+    if not fts_query:
+        return {}
+
+    ids = [int(document_id) for document_id in document_ids]
+    placeholders = ",".join("?" for _ in ids)
+    query = f"""
+        SELECT
+            rowid AS document_id,
+            snippet(
+                document_fts,
+                0,
+                '',
+                '',
+                ' … ',
+                ?
+            ) AS text_snippet
+        FROM document_fts
+        WHERE document_fts MATCH ?
+          AND rowid IN ({placeholders})
+    """
+    params: List[Any] = [
+        max(8, min(64, int(tokens))),
+        fts_query,
+        *ids,
+    ]
+    rows = conn.execute(query, params).fetchall()
+    return {
+        int(row["document_id"]): (row["text_snippet"] or "").strip()
+        for row in rows
+        if row["text_snippet"]
+    }
+
+
+def get_document_detail(
+    conn: sqlite3.Connection,
+    document_id: int,
+    *,
+    text_preview_chars: int = 12000,
+) -> Optional[sqlite3.Row]:
+    """Return one record with archive/search metadata and bounded text preview."""
+    return conn.execute(
+        """
+        SELECT
+            d.id,
+            d.url,
+            d.title,
+            d.filename,
+            d.file_type,
+            d.published_date,
+            d.discovered_at,
+            d.downloaded_at,
+            d.mime_type,
+            d.file_size,
+            d.sha256,
+            d.download_status,
+            d.download_error,
+            d.local_path,
+            d.storage_backend,
+            d.storage_key,
+            a.name AS agency_name,
+            o.name AS office_name,
+            dt.extraction_status,
+            dt.extraction_method,
+            dt.extraction_error,
+            dt.extracted_at,
+            dt.character_count,
+            dt.truncated,
+            SUBSTR(COALESCE(dt.body, ''), 1, ?) AS text_preview
+        FROM documents d
+        LEFT JOIN agencies a ON a.id = d.agency_id
+        LEFT JOIN offices o ON o.id = d.office_id
+        LEFT JOIN document_text dt ON dt.document_id = d.id
+        WHERE d.id = ?
+        """,
+        (
+            max(1000, min(50000, int(text_preview_chars))),
+            int(document_id),
+        ),
+    ).fetchone()
+
+
+def get_document_source_details(
+    conn: sqlite3.Connection,
+    document_id: int,
+) -> List[sqlite3.Row]:
+    return conn.execute(
+        """
+        SELECT
+            rr.label,
+            rr.url,
+            rr.source_type,
+            rr.level,
+            a.name AS agency_name,
+            o.name AS office_name,
+            ds.first_seen_at,
+            ds.last_seen_at
+        FROM document_sources ds
+        JOIN reading_rooms rr ON rr.id = ds.reading_room_id
+        LEFT JOIN agencies a ON a.id = rr.agency_id
+        LEFT JOIN offices o ON o.id = rr.office_id
+        WHERE ds.document_id = ?
+        ORDER BY
+            COALESCE(a.name, ''),
+            COALESCE(o.name, ''),
+            COALESCE(rr.label, rr.url)
+        """,
+        (int(document_id),),
+    ).fetchall()
+
+
 def query_documents_page(
     conn: sqlite3.Connection,
     agency_id: Optional[int] = None,
