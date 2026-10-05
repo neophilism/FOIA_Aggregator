@@ -1,0 +1,154 @@
+name: Bootstrap live acceptance
+
+on:
+  push:
+    branches:
+      - ops/bootstrap-live-acceptance
+
+jobs:
+  acceptance:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 30
+    env:
+      PYTHONPATH: .
+      B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+      B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+      FOIA_STORAGE_BACKEND: b2
+      FOIA_DB_PATH: data/bootstrapped.db
+      FOIA_FILES_DIR: data/files
+      PORT: "8000"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Verify B2 secrets
+        shell: bash
+        run: |
+          test -n "$B2_KEY_ID"
+          test -n "$B2_APPLICATION_KEY"
+
+      - name: Install Tesseract
+        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Bootstrap newest verified database with bucket auto-discovery
+        run: |
+          rm -f "$FOIA_DB_PATH"
+          python main.py bootstrap-db --destination "$FOIA_DB_PATH"
+
+      - name: Verify restored corpus and demo searches
+        run: |
+          python - <<'PY'
+          import sqlite3
+          from foia_archive.storage import get_archive_stats, query_documents
+
+          db = "data/bootstrapped.db"
+          conn = sqlite3.connect(db)
+          conn.row_factory = sqlite3.Row
+          try:
+              stats = get_archive_stats(conn)
+              assert stats["records"] >= 65, stats
+              assert stats["archived_records"] >= 62, stats
+              assert stats["searchable_records"] >= 59, stats
+              assert stats["ocr_records"] >= 6, stats
+
+              checks = {
+                  "financial stability": {
+                      "Federal Deposit Insurance Corporation",
+                      "Federal Open Market Committee",
+                      "Federal Reserve System",
+                  },
+                  "Medley Global Advisors": {
+                      "Federal Reserve System",
+                  },
+                  "nominee filers": {
+                      "Office of Government Ethics",
+                  },
+              }
+              for query, expected_agencies in checks.items():
+                  rows = query_documents(conn, title_query=query, limit=100)
+                  agencies = {row["agency_name"] for row in rows}
+                  missing = expected_agencies - agencies
+                  assert not missing, (query, missing, agencies)
+
+              oge = conn.execute(
+                  """
+                  SELECT d.id
+                  FROM documents d
+                  JOIN agencies a ON a.id = d.agency_id
+                  JOIN document_text dt ON dt.document_id = d.id
+                  WHERE a.name = 'Office of Government Ethics'
+                    AND dt.extraction_method = 'ocr'
+                  LIMIT 1
+                  """
+              ).fetchone()
+              assert oge is not None
+              print(f"OGE_RECORD_ID={oge['id']}")
+          finally:
+              conn.close()
+          PY
+
+      - name: Start web app from restored corpus
+        shell: bash
+        run: |
+          python -m uvicorn ui.server:app --host 127.0.0.1 --port 8000 > /tmp/foia-web.log 2>&1 &
+          echo $! > /tmp/foia-web.pid
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8000/healthz >/tmp/health.json; then
+              cat /tmp/health.json
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/foia-web.log
+          exit 1
+
+      - name: Verify public demo searches
+        shell: bash
+        run: |
+          curl -fsS "http://127.0.0.1:8000/?q=financial+stability" > /tmp/search1.html
+          grep -q "Federal Deposit Insurance Corporation" /tmp/search1.html
+          grep -q "Federal Reserve System" /tmp/search1.html
+
+          curl -fsS "http://127.0.0.1:8000/?q=Medley+Global+Advisors" > /tmp/search2.html
+          grep -q "FOIA Response Regarding September 2012 Federal Open Market Committee Meeting" /tmp/search2.html
+
+          curl -fsS "http://127.0.0.1:8000/?q=nominee+filers" > /tmp/search3.html
+          grep -q "Office of Government Ethics" /tmp/search3.html
+          grep -q "OGE FOIA FY 26-103" /tmp/search3.html
+
+      - name: Verify private B2 archive route signs a download
+        shell: bash
+        run: |
+          DOC_ID=$(python - <<'PY'
+          import sqlite3
+          conn = sqlite3.connect("data/bootstrapped.db")
+          try:
+              row = conn.execute(
+                  """
+                  SELECT d.id
+                  FROM documents d
+                  JOIN agencies a ON a.id = d.agency_id
+                  WHERE a.name = 'Office of Government Ethics'
+                    AND d.download_status = 'downloaded'
+                  LIMIT 1
+                  """
+              ).fetchone()
+              if row is None:
+                  raise SystemExit(1)
+              print(row[0])
+          finally:
+              conn.close()
+          PY
+          )
+          STATUS=$(curl -sS -o /dev/null -w "%{http_code}" "http://127.0.0.1:8000/archive/$DOC_ID")
+          test "$STATUS" = "307"
