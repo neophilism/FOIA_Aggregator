@@ -7,6 +7,7 @@ services:
       FOIA_DB_PATH: /data/foia_archive.db
       FOIA_FILES_DIR: /data/files
       FOIA_STORAGE_BACKEND: b2
+      FOIA_BOOTSTRAP_DB_FROM_B2: "${FOIA_BOOTSTRAP_DB_FROM_B2:-true}"
       PORT: "8000"
     volumes:
       - foia_data:/data

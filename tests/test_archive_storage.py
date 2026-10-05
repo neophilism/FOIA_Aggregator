@@ -191,6 +191,105 @@ class ArchiveStorageTests(unittest.TestCase):
         self.assertEqual(backend.max_archive_bytes, 123)
         create_client.assert_called_once()
 
+    def test_factory_discovers_unique_bucket_from_scoped_key(self):
+        config = Config(
+            {
+                "storage": {
+                    "backend": "b2",
+                    "files_dir": str(self.root / "files"),
+                    "b2": {
+                        "bucket": "",
+                        "region": "",
+                        "endpoint_url": "",
+                        "max_archive_bytes": 123,
+                    },
+                }
+            }
+        )
+        storage_api = {
+            "s3ApiUrl": "https://s3.us-east-005.backblazeb2.com",
+            "allowed": {
+                "buckets": [
+                    {
+                        "id": "bucket-id",
+                        "name": "foia-seeded-demo",
+                    }
+                ]
+            },
+        }
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "B2_KEY_ID": "key-id",
+                    "B2_APPLICATION_KEY": "secret",
+                    "B2_BUCKET": "",
+                    "B2_REGION": "",
+                    "B2_ENDPOINT_URL": "",
+                },
+                clear=False,
+            ),
+            patch(
+                "foia_archive.archive_storage._authorize_b2_scope",
+                return_value=storage_api,
+            ) as authorize,
+            patch("foia_archive.archive_storage.boto3.client") as create_client,
+        ):
+            create_client.return_value = FakeS3Client()
+            backend = get_archive_storage(config)
+
+        self.assertEqual(backend.bucket, "foia-seeded-demo")
+        self.assertEqual(backend.region, "us-east-005")
+        self.assertEqual(
+            backend.endpoint_url,
+            "https://s3.us-east-005.backblazeb2.com",
+        )
+        authorize.assert_called_once_with("key-id", "secret")
+
+    def test_factory_rejects_ambiguous_bucket_scope_without_bucket_name(self):
+        config = Config(
+            {
+                "storage": {
+                    "backend": "b2",
+                    "files_dir": str(self.root / "files"),
+                    "b2": {},
+                }
+            }
+        )
+        storage_api = {
+            "s3ApiUrl": "https://s3.us-east-005.backblazeb2.com",
+            "allowed": {
+                "buckets": [
+                    {"id": "one", "name": "one"},
+                    {"id": "two", "name": "two"},
+                ]
+            },
+        }
+
+        with (
+            patch.dict(
+                "os.environ",
+                {
+                    "B2_KEY_ID": "key-id",
+                    "B2_APPLICATION_KEY": "secret",
+                    "B2_BUCKET": "",
+                    "B2_REGION": "",
+                    "B2_ENDPOINT_URL": "",
+                },
+                clear=False,
+            ),
+            patch(
+                "foia_archive.archive_storage._authorize_b2_scope",
+                return_value=storage_api,
+            ),
+        ):
+            with self.assertRaisesRegex(
+                Exception,
+                "multiple buckets",
+            ):
+                get_archive_storage(config)
+
     def test_migration_backfills_existing_local_archive_location(self):
         db_path = self.root / "archive.db"
         files_dir = self.root / "files"

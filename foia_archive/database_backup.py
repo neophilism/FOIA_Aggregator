@@ -346,6 +346,41 @@ def list_database_backups(config: Config) -> list[dict]:
     return objects
 
 
+def bootstrap_database_from_b2(
+    config: Config,
+    *,
+    destination_path: Optional[Path | str] = None,
+) -> Optional[Path]:
+    """Restore the newest verified B2 snapshot when the live DB is absent.
+
+    Existing non-empty databases are never overwritten automatically.
+    """
+    destination = Path(
+        destination_path
+        or config.storage.get("db_path", "data/foia_archive.db")
+    )
+    if destination.exists() and destination.stat().st_size > 0:
+        return None
+
+    if destination.exists():
+        destination.unlink()
+
+    backups = list_database_backups(config)
+    if not backups:
+        return None
+
+    newest_key = str(backups[0].get("Key") or "")
+    if not newest_key:
+        return None
+
+    return restore_database_from_b2(
+        config,
+        key=newest_key,
+        destination_path=destination,
+        overwrite=True,
+    )
+
+
 def restore_database_from_b2(
     config: Config,
     *,

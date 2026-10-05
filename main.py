@@ -2,6 +2,7 @@ import typer
 
 from foia_archive.database_backup import (
     backup_database_to_b2,
+    bootstrap_database_from_b2,
     restore_database_from_b2,
 )
 from foia_archive.engine import run_once
@@ -57,6 +58,30 @@ def backup_db(
     typer.echo(
         f"Uploaded {result.key} ({result.compressed_bytes} bytes)"
     )
+
+
+@app.command("bootstrap-db")
+def bootstrap_db(
+    config: str = "config/settings.yaml",
+    destination: str | None = typer.Option(
+        None,
+        "--destination",
+        help="Live database destination. Defaults to storage.db_path.",
+    ),
+):
+    """Restore the newest verified B2 snapshot only when the live DB is absent."""
+    cfg = load_config(config)
+    restored = bootstrap_database_from_b2(
+        cfg,
+        destination_path=destination,
+    )
+    if restored is None:
+        typer.echo(
+            "Database bootstrap skipped: a live database already exists "
+            "or no B2 backup is available."
+        )
+        return
+    typer.echo(f"Bootstrapped verified database to {restored}")
 
 
 @app.command("restore-db")
