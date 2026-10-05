@@ -283,6 +283,12 @@ class SearchPageTests(unittest.TestCase):
         self.assertIn("Showing 51–55 of 55 results", html)
         self.assertIn("Page 3 of 3", html)
 
+    def test_unsupported_page_size_falls_back_to_50(self):
+        html = self.render(page_size=37)
+
+        self.assertIn("Showing 1–50 of 75 results", html)
+        self.assertIn('<option value="50" selected>50</option>', html)
+
     def test_empty_search_has_clear_empty_state(self):
         html = self.render(q="does-not-exist")
 
