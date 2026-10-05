@@ -20,17 +20,19 @@ export FOIA_API_KEY="MY_KEY"
 
 ## CLI Usage
 
-Run a discovery-only crawl. Dry-run records discovered document metadata without downloading files and limits newly discovered documents per reading room:
+Run a discovery-only crawl. Dry-run records discovered document metadata without downloading files:
 
 ```bash
 python main.py run --dry-run true --max-docs-per-source 10
 ```
 
-Run a live crawl to download documents. Documents previously discovered during a dry run remain eligible for download:
+Run a bounded live crawl to download documents. Documents previously discovered during a dry run remain eligible for download:
 
 ```bash
-python main.py run --dry-run false
+python main.py run --dry-run false --max-docs-per-source 10
 ```
+
+`max_docs_per_source` is a safety ceiling in both dry-run and live mode. In live mode it counts new or not-yet-archived candidates; already archived records do not consume the quota, so repeated bounded cycles continue advancing through a source.
 
 Continuous mode:
 
