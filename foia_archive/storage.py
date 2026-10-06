@@ -720,6 +720,169 @@ def get_archive_stats(conn: sqlite3.Connection) -> Dict[str, Any]:
     return stats
 
 
+def get_admin_dashboard_stats(conn: sqlite3.Connection) -> Dict[str, Any]:
+    """Return read-only operational statistics for the administrator dashboard."""
+    velocity = conn.execute(
+        """
+        SELECT
+            SUM(CASE WHEN julianday(discovered_at) >= julianday('now', '-1 day')
+                     THEN 1 ELSE 0 END) AS discovered_24h,
+            SUM(CASE WHEN julianday(discovered_at) >= julianday('now', '-7 days')
+                     THEN 1 ELSE 0 END) AS discovered_7d,
+            SUM(CASE WHEN julianday(downloaded_at) >= julianday('now', '-1 day')
+                     THEN 1 ELSE 0 END) AS downloaded_24h,
+            SUM(CASE WHEN julianday(downloaded_at) >= julianday('now', '-7 days')
+                     THEN 1 ELSE 0 END) AS downloaded_7d,
+            SUM(CASE WHEN julianday(downloaded_at) >= julianday('now', '-7 days')
+                     THEN COALESCE(file_size, 0) ELSE 0 END) AS bytes_7d
+        FROM documents
+        """
+    ).fetchone()
+
+    extracted = conn.execute(
+        """
+        SELECT
+            SUM(CASE WHEN julianday(extracted_at) >= julianday('now', '-1 day')
+                     THEN 1 ELSE 0 END) AS extracted_24h,
+            SUM(CASE WHEN julianday(extracted_at) >= julianday('now', '-7 days')
+                     THEN 1 ELSE 0 END) AS extracted_7d
+        FROM document_text
+        """
+    ).fetchone()
+
+    sources = conn.execute(
+        """
+        SELECT
+            SUM(CASE WHEN active = 1 THEN 1 ELSE 0 END) AS active,
+            SUM(CASE WHEN active = 1 AND last_successful_crawl_at IS NULL
+                     THEN 1 ELSE 0 END) AS never_succeeded,
+            SUM(CASE WHEN active = 1 AND last_error IS NOT NULL
+                     AND last_error != '' THEN 1 ELSE 0 END) AS with_errors,
+            SUM(CASE WHEN active = 1
+                     AND last_successful_crawl_at IS NOT NULL
+                     AND julianday(last_successful_crawl_at) < julianday('now', '-7 days')
+                     THEN 1 ELSE 0 END) AS stale_7d,
+            SUM(CASE WHEN active = 1 AND (
+                        LOWER(COALESCE(last_error, '')) LIKE '%403%'
+                        OR LOWER(COALESCE(last_error, '')) LIKE '%forbidden%'
+                     ) THEN 1 ELSE 0 END) AS blocked_403,
+            SUM(CASE WHEN active = 1 AND (
+                        LOWER(COALESCE(last_error, '')) LIKE '%429%'
+                        OR LOWER(COALESCE(last_error, '')) LIKE '%rate limit%'
+                     ) THEN 1 ELSE 0 END) AS rate_limited
+        FROM reading_rooms
+        """
+    ).fetchone()
+
+    def grouped(query: str) -> List[Dict[str, Any]]:
+        return [dict(row) for row in conn.execute(query).fetchall()]
+
+    failing_sources = grouped(
+        """
+        SELECT
+            rr.id,
+            rr.label,
+            rr.url,
+            rr.last_error,
+            rr.last_error_at,
+            rr.last_successful_crawl_at,
+            a.name AS agency_name,
+            o.name AS office_name
+        FROM reading_rooms rr
+        LEFT JOIN agencies a ON a.id = rr.agency_id
+        LEFT JOIN offices o ON o.id = rr.office_id
+        WHERE rr.active = 1
+          AND rr.last_error IS NOT NULL
+          AND rr.last_error != ''
+        ORDER BY COALESCE(rr.last_error_at, '') DESC, rr.id DESC
+        LIMIT 20
+        """
+    )
+
+    recent_downloads = grouped(
+        """
+        SELECT
+            d.id,
+            d.title,
+            d.filename,
+            d.file_type,
+            d.file_size,
+            d.downloaded_at,
+            a.name AS agency_name
+        FROM documents d
+        LEFT JOIN agencies a ON a.id = d.agency_id
+        WHERE d.download_status = 'downloaded'
+        ORDER BY COALESCE(d.downloaded_at, '') DESC, d.id DESC
+        LIMIT 12
+        """
+    )
+
+    return {
+        "velocity": {
+            key: int(velocity[key] or 0)
+            for key in (
+                "discovered_24h",
+                "discovered_7d",
+                "downloaded_24h",
+                "downloaded_7d",
+                "bytes_7d",
+            )
+        }
+        | {
+            key: int(extracted[key] or 0)
+            for key in ("extracted_24h", "extracted_7d")
+        },
+        "sources": {
+            key: int(sources[key] or 0)
+            for key in (
+                "active",
+                "never_succeeded",
+                "with_errors",
+                "stale_7d",
+                "blocked_403",
+                "rate_limited",
+            )
+        },
+        "download_statuses": grouped(
+            """
+            SELECT COALESCE(download_status, 'unknown') AS label, COUNT(*) AS count
+            FROM documents
+            GROUP BY COALESCE(download_status, 'unknown')
+            ORDER BY count DESC, label
+            """
+        ),
+        "extraction_statuses": grouped(
+            """
+            SELECT COALESCE(extraction_status, 'none') AS label, COUNT(*) AS count
+            FROM document_text
+            GROUP BY COALESCE(extraction_status, 'none')
+            ORDER BY count DESC, label
+            """
+        ),
+        "extraction_methods": grouped(
+            """
+            SELECT COALESCE(extraction_method, 'none') AS label, COUNT(*) AS count
+            FROM document_text
+            WHERE extraction_status IN ('indexed', 'indexed_truncated')
+            GROUP BY COALESCE(extraction_method, 'none')
+            ORDER BY count DESC, label
+            """
+        ),
+        "file_types": grouped(
+            """
+            SELECT UPPER(COALESCE(file_type, 'unknown')) AS label, COUNT(*) AS count
+            FROM documents
+            GROUP BY UPPER(COALESCE(file_type, 'unknown'))
+            ORDER BY count DESC, label
+            LIMIT 15
+            """
+        ),
+        "failing_sources": failing_sources,
+        "recent_downloads": recent_downloads,
+        "database_archived_bytes": archived_remote_bytes(conn, "b2"),
+    }
+
+
 def query_document_snippets(
     conn: sqlite3.Connection,
     document_ids: List[int],
