@@ -51,6 +51,43 @@ Each wave:
 
 If the Actions time limit ends first, progress is still durable because every completed wave writes a verified B2 database checkpoint. A later expansion run resumes from the latest checkpoint.
 
+
+## Backblaze transaction-class policy
+
+Normal corpus ingestion must not issue a B2 `HeadObject` request for every
+archived document. Backblaze bills those per-object metadata reads as Class B
+transactions, which can exhaust the free daily Class B allowance long before
+storage is full.
+
+The archive therefore uses this policy:
+
+- successful document and database-backup uploads are authoritative for normal
+  ingestion;
+- SQLite stores the successful document object key and is the normal source of
+  truth for deduplication;
+- content-addressed duplicates already recorded in SQLite are not uploaded
+  again;
+- bucket reconciliation uses paginated `ListObjectsV2` manifests (Class C)
+  instead of one Class B `HeadObject` call per object;
+- database restores perform the necessary object read, then validate the
+  checksum fragment embedded in the backup key plus gzip and SQLite integrity,
+  without a second metadata HEAD request.
+
+Run a document-manifest reconciliation with:
+
+```bash
+python main.py reconcile-b2
+```
+
+The command lists the current `documents/` object manifest, compares it with
+successfully archived B2 keys in SQLite, reports missing/unexpected/size-mismatch
+counts, and exits nonzero when a recorded archive object is missing or has a
+different size.
+
+`ListObjectsV2` returns at most 1,000 keys per response, so larger archives
+are reconciled through pagination. This remains dramatically cheaper than
+performing a Class B metadata read for every object.
+
 ## Autonomous refresh
 
 The workflow:
