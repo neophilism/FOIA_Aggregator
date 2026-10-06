@@ -289,6 +289,65 @@ class SecureDownloaderTests(unittest.TestCase):
         self.assertEqual(result.status, "downloaded")
         sleep.assert_called_once_with(3.0)
 
+    def test_403_retries_once_with_browser_compatible_headers(self):
+        blocked = FakeResponse(403)
+        success = FakeResponse(
+            200,
+            {"Content-Type": "application/pdf"},
+            [b"ok"],
+        )
+        headers_seen = []
+
+        def fake_get(url, **kwargs):
+            headers_seen.append(dict(kwargs.get("headers") or {}))
+            return [blocked, success][len(headers_seen) - 1]
+
+        with (
+            patch(
+                "foia_archive.scraper_core.socket.getaddrinfo",
+                return_value=PUBLIC_ADDRINFO,
+            ),
+            patch(
+                "foia_archive.scraper_core.requests.get",
+                side_effect=fake_get,
+            ) as request,
+        ):
+            result = download_document(
+                "https://example.gov/report.pdf",
+                "report.pdf",
+                self.config,
+            )
+
+        self.assertEqual(result.status, "downloaded")
+        self.assertEqual(request.call_count, 2)
+        self.assertEqual(headers_seen[0]["User-Agent"], "FOIAArchiveTest/1.0")
+        self.assertIn("Mozilla/5.0", headers_seen[1]["User-Agent"])
+        self.assertIn("Accept-Language", headers_seen[1])
+        self.assertTrue(blocked.closed)
+
+    def test_repeated_403_is_classified_as_access_blocked(self):
+        first = FakeResponse(403)
+        second = FakeResponse(403)
+        with (
+            patch(
+                "foia_archive.scraper_core.socket.getaddrinfo",
+                return_value=PUBLIC_ADDRINFO,
+            ),
+            patch(
+                "foia_archive.scraper_core.requests.get",
+                side_effect=[first, second],
+            ) as request,
+        ):
+            result = download_document(
+                "https://example.gov/report.pdf",
+                "report.pdf",
+                self.config,
+            )
+
+        self.assertEqual(result.status, "access_blocked")
+        self.assertIn("browser-compatible fallback", result.error)
+        self.assertEqual(request.call_count, 2)
+
     def test_non_retryable_http_error_is_not_retried(self):
         response = FakeResponse(404)
         with (

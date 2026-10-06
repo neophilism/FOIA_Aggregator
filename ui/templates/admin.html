@@ -1,0 +1,242 @@
+{% extends "base.html" %}
+
+{% block title %}Administrator dashboard — FOIA Aggregator{% endblock %}
+{% block social_title %}FOIA Aggregator administrator dashboard{% endblock %}
+{% block description %}Operational status for the FOIA Aggregator archive.{% endblock %}
+
+{% block content %}
+<section class="admin-hero">
+  <div>
+    <p class="eyebrow">Administrator dashboard</p>
+    <h1>Archive operations at a glance.</h1>
+    <p class="hero-copy">
+      Read-only operational telemetry for ingestion, storage, source health, extraction, backups, and deployment state.
+    </p>
+  </div>
+  <div class="admin-state">
+    <span class="badge downloaded">Live</span>
+    <span class="admin-muted">Signed in as {{ admin_user }}</span>
+  </div>
+</section>
+
+<section class="admin-grid admin-grid-4" aria-label="Archive overview">
+  <article class="admin-card">
+    <span class="admin-label">Archived files</span>
+    <strong>{{ "{:,}".format(stats.archived_records) }}</strong>
+    <span>{{ "{:,}".format(stats.searchable_records) }} searchable</span>
+  </article>
+  <article class="admin-card">
+    <span class="admin-label">Official sources</span>
+    <strong>{{ "{:,}".format(stats.active_sources) }}</strong>
+    <span>{{ "{:,}".format(operational.sources.with_errors) }} currently reporting errors</span>
+  </article>
+  <article class="admin-card">
+    <span class="admin-label">Discovered last 7 days</span>
+    <strong>{{ "{:,}".format(operational.velocity.discovered_7d) }}</strong>
+    <span>{{ "{:,}".format(operational.velocity.downloaded_7d) }} archived</span>
+  </article>
+  <article class="admin-card">
+    <span class="admin-label">OCR-assisted</span>
+    <strong>{{ "{:,}".format(stats.ocr_records) }}</strong>
+    <span>{{ "{:,}".format(operational.velocity.extracted_7d) }} extractions in 7 days</span>
+  </article>
+</section>
+
+<section class="admin-section">
+  <div class="admin-section-heading">
+    <div>
+      <p class="eyebrow">Storage</p>
+      <h2>Backblaze B2 capacity</h2>
+    </div>
+    {% if storage.error %}
+      <span class="badge error">Storage telemetry error</span>
+    {% else %}
+      <span class="badge downloaded">{{ "%.1f"|format(storage.percent_of_target) }}% of target</span>
+    {% endif %}
+  </div>
+
+  <div class="admin-card">
+    {% if storage.error %}
+      <p class="admin-error">{{ storage.error }}</p>
+    {% else %}
+      <div class="capacity-track" aria-label="B2 capacity utilization">
+        <span style="width: {{ storage.percent_of_target }}%"></span>
+      </div>
+      <div class="admin-grid admin-grid-4 admin-card-grid">
+        <div>
+          <span class="admin-label">Actual stored</span>
+          <strong>{{ storage.stored_bytes|filesize }}</strong>
+        </div>
+        <div>
+          <span class="admin-label">Document versions</span>
+          <strong>{{ storage.document_bytes|filesize }}</strong>
+        </div>
+        <div>
+          <span class="admin-label">Database backups</span>
+          <strong>{{ storage.backup_bytes|filesize }}</strong>
+        </div>
+        <div>
+          <span class="admin-label">Headroom to target</span>
+          <strong>{{ storage.remaining_to_target|filesize }}</strong>
+        </div>
+      </div>
+      <p class="admin-muted">
+        {{ "{:,}".format(storage.version_count) }} concrete object versions ·
+        {{ "{:,}".format(storage.current_object_count) }} current objects ·
+        document cap {{ storage.document_cap_bytes|filesize }} ·
+        target {{ storage.target_total_bytes|filesize }}
+      </p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="admin-grid admin-grid-2">
+  <article class="admin-section">
+    <div class="admin-section-heading">
+      <div>
+        <p class="eyebrow">Ingestion</p>
+        <h2>Velocity</h2>
+      </div>
+    </div>
+    <div class="admin-card">
+      <dl class="admin-kv">
+        <div><dt>Discovered, 24h</dt><dd>{{ "{:,}".format(operational.velocity.discovered_24h) }}</dd></div>
+        <div><dt>Archived, 24h</dt><dd>{{ "{:,}".format(operational.velocity.downloaded_24h) }}</dd></div>
+        <div><dt>Extracted, 24h</dt><dd>{{ "{:,}".format(operational.velocity.extracted_24h) }}</dd></div>
+        <div><dt>Archived bytes, 7d</dt><dd>{{ operational.velocity.bytes_7d|filesize }}</dd></div>
+      </dl>
+    </div>
+  </article>
+
+  <article class="admin-section">
+    <div class="admin-section-heading">
+      <div>
+        <p class="eyebrow">Sources</p>
+        <h2>Source health</h2>
+      </div>
+    </div>
+    <div class="admin-card">
+      <dl class="admin-kv">
+        <div><dt>Active</dt><dd>{{ "{:,}".format(operational.sources.active) }}</dd></div>
+        <div><dt>Never succeeded</dt><dd>{{ "{:,}".format(operational.sources.never_succeeded) }}</dd></div>
+        <div><dt>Stale &gt; 7 days</dt><dd>{{ "{:,}".format(operational.sources.stale_7d) }}</dd></div>
+        <div><dt>403 / forbidden</dt><dd>{{ "{:,}".format(operational.sources.blocked_403) }}</dd></div>
+        <div><dt>Rate-limited</dt><dd>{{ "{:,}".format(operational.sources.rate_limited) }}</dd></div>
+      </dl>
+    </div>
+  </article>
+</section>
+
+<section class="admin-grid admin-grid-3">
+  <article class="admin-section">
+    <p class="eyebrow">Pipeline</p>
+    <h2>Download status</h2>
+    <div class="admin-card">
+      <ul class="metric-list">
+        {% for item in operational.download_statuses %}
+          <li><span>{{ item.label|replace('_', ' ')|title }}</span><strong>{{ "{:,}".format(item.count) }}</strong></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </article>
+
+  <article class="admin-section">
+    <p class="eyebrow">Search</p>
+    <h2>Extraction status</h2>
+    <div class="admin-card">
+      <ul class="metric-list">
+        {% for item in operational.extraction_statuses %}
+          <li><span>{{ item.label|replace('_', ' ')|title }}</span><strong>{{ "{:,}".format(item.count) }}</strong></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </article>
+
+  <article class="admin-section">
+    <p class="eyebrow">Corpus</p>
+    <h2>File types</h2>
+    <div class="admin-card">
+      <ul class="metric-list">
+        {% for item in operational.file_types %}
+          <li><span>{{ item.label }}</span><strong>{{ "{:,}".format(item.count) }}</strong></li>
+        {% endfor %}
+      </ul>
+    </div>
+  </article>
+</section>
+
+<section class="admin-grid admin-grid-2">
+  <article class="admin-section">
+    <div class="admin-section-heading">
+      <div>
+        <p class="eyebrow">Attention</p>
+        <h2>Recent source failures</h2>
+      </div>
+      <span class="badge {% if operational.sources.with_errors %}error{% else %}downloaded{% endif %}">
+        {{ operational.sources.with_errors }} active errors
+      </span>
+    </div>
+    <div class="admin-card table-wrap">
+      {% if operational.failing_sources %}
+        <table class="admin-table">
+          <thead>
+            <tr><th>Source</th><th>Last error</th></tr>
+          </thead>
+          <tbody>
+            {% for source in operational.failing_sources %}
+              <tr>
+                <td>
+                  <a href="{{ source.url }}" target="_blank" rel="noopener noreferrer">
+                    {{ source.label or source.agency_name or source.url }}
+                  </a>
+                  <small>{{ source.agency_name or '' }}</small>
+                </td>
+                <td>
+                  <span class="error-text">{{ source.last_error }}</span>
+                  <small>{{ source.last_error_at|timestamp }}</small>
+                </td>
+              </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      {% else %}
+        <p class="admin-muted">No active source errors.</p>
+      {% endif %}
+    </div>
+  </article>
+
+  <article class="admin-section">
+    <p class="eyebrow">Activity</p>
+    <h2>Recent archived records</h2>
+    <div class="admin-card">
+      <ul class="activity-list">
+        {% for item in operational.recent_downloads %}
+          <li>
+            <div>
+              <a href="/record/{{ item.id }}">{{ item.title or item.filename or 'Untitled record' }}</a>
+              <small>{{ item.agency_name or 'Unknown agency' }} · {{ item.downloaded_at|timestamp }}</small>
+            </div>
+            <span>{{ item.file_size|filesize }}</span>
+          </li>
+        {% endfor %}
+      </ul>
+    </div>
+  </article>
+</section>
+
+<section class="admin-section">
+  <p class="eyebrow">System</p>
+  <h2>Operational state</h2>
+  <div class="admin-card">
+    <dl class="admin-kv admin-kv-wide">
+      <div><dt>Database</dt><dd>{{ database_size|filesize }}</dd></div>
+      <div><dt>Schema version</dt><dd>{{ schema_version }}</dd></div>
+      <div><dt>Latest B2 backup</dt><dd>{{ storage.latest_backup_at|timestamp }}</dd></div>
+      <div><dt>Retained backups</dt><dd>{{ storage.backup_count }}</dd></div>
+      <div><dt>Process started</dt><dd>{{ process_started_at|timestamp }}</dd></div>
+      <div><dt>Autonomous refresh</dt><dd>{% if autonomous_refresh_enabled %}Enabled{% else %}Disabled{% endif %}</dd></div>
+      <div><dt>Render commit</dt><dd><code>{{ render_commit[:12] if render_commit else 'Unavailable' }}</code></dd></div>
+    </dl>
+  </div>
+</section>
+{% endblock %}

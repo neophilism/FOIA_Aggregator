@@ -11,6 +11,12 @@ crawler:
   page_max_size_mb: 5
   per_host_delay_seconds: 0.5
   user_agent: "FOIAArchiveBot/0.1 (+https://github.com/neophilism/FOIA_Aggregator)"
+  # Some public agency/CDN configurations reject non-browser HTTP clients even
+  # for otherwise public reading rooms. Retry a 403 once with ordinary
+  # browser-compatible request headers, without attempting CAPTCHA/auth bypass.
+  browser_compatibility_fallback: true
+  preserve_session_cookies: true
+  browser_user_agent: "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/128.0.0.0 Safari/537.36"
 
 foia_hub:
   base_url: "https://api.foia.gov/api"
