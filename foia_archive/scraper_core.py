@@ -734,13 +734,15 @@ def _request_with_safe_redirects(
     timeout: float,
     max_redirects: int,
     rate_limiter: Optional[HostRateLimiter] = None,
+    session: Optional[requests.Session] = None,
 ):
     current_url = url
     for redirect_count in range(max_redirects + 1):
         _validate_public_destination(current_url)
         if rate_limiter is not None:
             rate_limiter.wait(current_url)
-        response = requests.get(
+        requester = session.get if session is not None else requests.get
+        response = requester(
             current_url,
             headers=headers,
             timeout=timeout,
@@ -910,6 +912,7 @@ def _fetch_crawl_resource(
     url: str,
     config: Config,
     rate_limiter: HostRateLimiter,
+    session: Optional[requests.Session] = None,
 ):
     headers = _request_headers(config)
     using_browser_fallback = False
@@ -930,6 +933,7 @@ def _fetch_crawl_resource(
                 timeout=timeout,
                 max_redirects=max_redirects,
                 rate_limiter=rate_limiter,
+                session=session,
             )
             status_code = getattr(response, "status_code", 200)
             if (
@@ -951,6 +955,7 @@ def _fetch_crawl_resource(
                     timeout=timeout,
                     max_redirects=max_redirects,
                     rate_limiter=rate_limiter,
+                    session=session,
                 )
                 status_code = getattr(response, "status_code", 200)
             if status_code == 403:
@@ -1118,6 +1123,7 @@ def download_document(
     filename_hint: str,
     config: Config,
     rate_limiter: Optional[HostRateLimiter] = None,
+    session: Optional[requests.Session] = None,
 ) -> DownloadResult:
     headers = _request_headers(config)
     using_browser_fallback = False
@@ -1143,6 +1149,7 @@ def download_document(
                 timeout=timeout,
                 max_redirects=max_redirects,
                 rate_limiter=rate_limiter,
+                session=session,
             )
             status_code = getattr(response, "status_code", 200)
             if (
@@ -1351,6 +1358,7 @@ def _process_document_candidate(
     config: Config,
     dry_run: bool,
     rate_limiter: HostRateLimiter,
+    session: Optional[requests.Session] = None,
 ) -> bool:
     """Persist/download one document candidate. Return True when newly discovered."""
     canonical = canonicalize_url(url)
@@ -1465,6 +1473,7 @@ def _process_document_candidate(
         filename_hint,
         config,
         rate_limiter=rate_limiter,
+        session=session,
     )
     if isinstance(result, Path):
         result = DownloadResult(status="downloaded", path=result)
@@ -1699,6 +1708,7 @@ def _crawl_pal_reading_room(
                     config,
                     dry_run,
                     rate_limiter,
+                    session=session,
                 )
                 if is_new:
                     new_documents += 1
@@ -1778,6 +1788,13 @@ def _crawl_reading_room_with_connection(
         )
         return
 
+    preserve_session = config.crawler.get("preserve_session_cookies", False)
+    if isinstance(preserve_session, str):
+        preserve_session = preserve_session.strip().lower() in {
+            "1", "true", "yes", "on"
+        }
+    crawl_session = requests.Session() if preserve_session else None
+
     max_pages = max(1, int(config.crawler.get("max_pages_per_source", 50)))
     max_depth = max(0, int(config.crawler.get("max_depth", 3)))
     max_discovered_docs = max(
@@ -1819,6 +1836,7 @@ def _crawl_reading_room_with_connection(
                 target.url,
                 config,
                 rate_limiter,
+                session=crawl_session,
             )
             final_url = canonicalize_url(final_url) or target.url
 
@@ -1864,6 +1882,7 @@ def _crawl_reading_room_with_connection(
                         config,
                         dry_run,
                         rate_limiter,
+                        session=crawl_session,
                     )
                     if is_new:
                         new_documents += 1
@@ -1901,6 +1920,8 @@ def _crawl_reading_room_with_connection(
                     attempted_at,
                     error,
                 )
+                if crawl_session is not None:
+                    crawl_session.close()
                 return
             logger.warning("Failed to crawl %s: %s", target.url, exc)
             continue
@@ -1943,6 +1964,7 @@ def _crawl_reading_room_with_connection(
                 config,
                 dry_run,
                 rate_limiter,
+                session=crawl_session,
             )
             if is_new:
                 new_documents += 1
@@ -1987,6 +2009,9 @@ def _crawl_reading_room_with_connection(
             rr["url"],
             len(seen_documents),
         )
+
+    if crawl_session is not None:
+        crawl_session.close()
 
     record_reading_room_crawl_success(
         conn,
