@@ -9,7 +9,9 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
+        antiword \
         ca-certificates \
+        catdoc \
         curl \
         gosu \
         tesseract-ocr \
