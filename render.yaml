@@ -18,4 +18,4 @@ services:
       - key: B2_APPLICATION_KEY
         sync: false
       - key: B2_MAX_ARCHIVE_BYTES
-        value: "9000000000"
+        value: "8500000000"

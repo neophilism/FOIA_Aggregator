@@ -1,33 +1,45 @@
-name: Seed presentation corpus
+name: Expand corpus toward B2 capacity
 
 on:
   workflow_dispatch:
     inputs:
+      target_total_bytes:
+        description: "Stop when actual B2 stored bytes reach this target"
+        required: true
+        default: "9000000000"
+      document_cap_bytes:
+        description: "Independent document-archive safety cap"
+        required: true
+        default: "8500000000"
       source_limit:
-        description: "Maximum official sources to crawl (breadth-first across agencies; 0 = all)"
+        description: "Maximum official sources per wave (0 = all)"
         required: true
-        default: "100"
+        default: "0"
       max_docs_per_source:
-        description: "Maximum new/not-yet-archived records per source"
+        description: "Maximum new/not-yet-archived records per source per wave"
         required: true
-        default: "1"
+        default: "20"
       max_pages_per_source:
         description: "Maximum pages/resources visited per source"
         required: true
-        default: "3"
+        default: "25"
       max_depth:
         description: "Maximum navigation depth within each reading room"
         required: true
-        default: "1"
+        default: "2"
+      max_waves:
+        description: "Maximum repeated crawl waves"
+        required: true
+        default: "12"
 
 concurrency:
-  group: seed-presentation-corpus
+  group: corpus-expansion
   cancel-in-progress: false
 
 jobs:
-  seed:
+  expand:
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 330
     env:
       PYTHONPATH: .
       B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
@@ -35,7 +47,10 @@ jobs:
       FOIA_STORAGE_BACKEND: b2
       FOIA_DB_PATH: data/foia_archive.db
       FOIA_FILES_DIR: data/files
-      B2_MAX_ARCHIVE_BYTES: "8500000000"
+      B2_MAX_ARCHIVE_BYTES: ${{ inputs.document_cap_bytes }}
+      FOIA_EXPANSION_TARGET_TOTAL_BYTES: ${{ inputs.target_total_bytes }}
+      FOIA_EXPANSION_MAX_WAVES: ${{ inputs.max_waves }}
+      FOIA_EXPANSION_MIN_PROGRESS_BYTES: "1"
       FOIA_CRAWLER_DRY_RUN: "false"
       FOIA_SOURCE_LIMIT: ${{ inputs.source_limit }}
       FOIA_MAX_DOCS_PER_SOURCE: ${{ inputs.max_docs_per_source }}
@@ -53,17 +68,13 @@ jobs:
       - name: Verify Backblaze secrets
         shell: bash
         run: |
-          missing=0
-          for name in B2_KEY_ID B2_APPLICATION_KEY; do
-            if [ -z "${!name}" ]; then
-              echo "::error::Missing repository secret: $name"
-              missing=1
-            fi
-          done
-          exit "$missing"
+          test -n "$B2_KEY_ID"
+          test -n "$B2_APPLICATION_KEY"
 
-      - name: Install Tesseract
-        run: sudo apt-get update && sudo apt-get install -y tesseract-ocr
+      - name: Install extraction system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y tesseract-ocr
 
       - name: Install Python dependencies
         run: |
@@ -92,7 +103,6 @@ jobs:
           )
           repo.raise_for_status()
           default_branch = repo.json()["default_branch"]
-
           spec = requests.get(
               f"https://raw.githubusercontent.com/usdoj/foia.gov/{default_branch}/swagger.json",
               timeout=30,
@@ -101,31 +111,26 @@ jobs:
           description = spec.json()["info"]["description"]
           text = BeautifulSoup(description, "html.parser").get_text(" ", strip=True)
           match = re.search(
-              r"use\\s+the\\s+following\\s+api[_ -]?key\\s+for\\s+testing\\.?\\s*([A-Za-z0-9_-]{20,})",
+              r"use\s+the\s+following\s+api[_ -]?key\s+for\s+testing\.?\s*([A-Za-z0-9_-]{20,})",
               text,
               flags=re.IGNORECASE,
           )
           if not match:
-              raise SystemExit(
-                  "Could not recover FOIA.gov's published testing API key "
-                  "from the first-party Swagger specification."
-              )
-
+              raise SystemExit("Could not recover FOIA.gov published testing API key")
           api_key = match.group(1)
           print(f"::add-mask::{api_key}")
           with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
-              env_file.write(f"FOIA_API_KEY={api_key}\\n")
+              env_file.write(f"FOIA_API_KEY={api_key}\n")
           PY
 
-      - name: Seed or extend presentation corpus
-        run: python scripts/seed_presentation_corpus.py
+      - name: Expand corpus toward capacity
+        run: python scripts/expand_corpus.py
 
-      - name: Preserve crawl logs and database for debugging
+      - name: Preserve final database for debugging
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: presentation-corpus-run-${{ github.run_id }}
-          path: |
-            data/foia_archive.db
+          name: corpus-expansion-${{ github.run_id }}
+          path: data/foia_archive.db
           if-no-files-found: ignore
           retention-days: 7
