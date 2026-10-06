@@ -4,6 +4,15 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="description" content="{% block description %}Search released federal FOIA records across agencies, including extracted document text and OCR.{% endblock %}">
+  <meta property="og:site_name" content="FOIA Aggregator">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="{% block social_title %}FOIA Aggregator — Search released federal records{% endblock %}">
+  <meta property="og:description" content="{% block social_description %}Search released federal FOIA records across agencies, including document text and OCR.{% endblock %}">
+  <meta property="og:url" content="{{ canonical_url }}">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="FOIA Aggregator — Search released federal records">
+  <meta name="twitter:description" content="Search released federal FOIA records across agencies, including document text and OCR.">
+  <link rel="canonical" href="{{ canonical_url }}">
   <title>{% block title %}FOIA Aggregator{% endblock %}</title>
   <link rel="stylesheet" href="/static/app.css">
 </head>

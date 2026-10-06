@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+
+{% block title %}{{ status_code }} — FOIA Aggregator{% endblock %}
+{% block social_title %}FOIA Aggregator{% endblock %}
+
+{% block content %}
+<section class="error-page">
+  <p class="eyebrow">HTTP {{ status_code }}</p>
+  <h1>{{ heading }}</h1>
+  <p class="hero-copy">{{ message }}</p>
+  <div class="record-actions">
+    <a class="button" href="/">Search the archive</a>
+    <a class="button secondary" href="/about">About & coverage</a>
+  </div>
+</section>
+{% endblock %}

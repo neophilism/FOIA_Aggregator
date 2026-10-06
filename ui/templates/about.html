@@ -32,6 +32,10 @@
   </div>
 </div>
 
+{% if stats.latest_activity_at %}
+  <p class="archive-freshness">Archive updated {{ stats.latest_activity_at|timestamp }}</p>
+{% endif %}
+
 <section class="about-section">
   <h2>What it does</h2>
   <p>

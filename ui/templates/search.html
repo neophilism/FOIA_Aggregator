@@ -44,6 +44,10 @@
       </div>
     </div>
 
+    {% if stats.latest_activity_at %}
+      <p class="archive-freshness">Archive updated {{ stats.latest_activity_at|timestamp }}</p>
+    {% endif %}
+
     <details class="filters" {% if filters_active %}open{% endif %}>
       <summary>Advanced filters</summary>
       <div class="filter-grid">

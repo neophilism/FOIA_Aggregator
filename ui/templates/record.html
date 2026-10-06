@@ -2,7 +2,9 @@
 
 {% block title %}{{ document.title or document.filename or 'Record' }} — FOIA Aggregator{% endblock %}
 
+{% block social_title %}{{ document.title or document.filename or 'Federal public record' }} — FOIA Aggregator{% endblock %}
 {% block description %}Archived federal public record with source provenance, file metadata, and searchable text information.{% endblock %}
+{% block social_description %}Archived federal public record from {{ document.agency_name or 'a federal agency' }}, with source provenance and searchable text information.{% endblock %}
 
 {% block content %}
 <a class="back-link" href="/">← Back to search</a>
