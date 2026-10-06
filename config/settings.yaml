@@ -63,5 +63,6 @@ storage:
     bucket: ""
     region: ""
     endpoint_url: ""
-    # Keep the initial archive below Backblaze's free 10 GB allowance.
-    max_archive_bytes: 9000000000
+    # Reserve substantial headroom inside Backblaze's free 10 GB allowance
+    # for verified SQLite snapshots, B2 object-version overhead, and safety.
+    max_archive_bytes: 8500000000
