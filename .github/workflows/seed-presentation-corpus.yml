@@ -35,7 +35,7 @@ jobs:
       FOIA_STORAGE_BACKEND: b2
       FOIA_DB_PATH: data/foia_archive.db
       FOIA_FILES_DIR: data/files
-      B2_MAX_ARCHIVE_BYTES: "9000000000"
+      B2_MAX_ARCHIVE_BYTES: "8500000000"
       FOIA_CRAWLER_DRY_RUN: "false"
       FOIA_SOURCE_LIMIT: ${{ inputs.source_limit }}
       FOIA_MAX_DOCS_PER_SOURCE: ${{ inputs.max_docs_per_source }}
