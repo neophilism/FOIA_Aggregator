@@ -30,6 +30,16 @@ class ArchiveLocation:
     local_path: Optional[str] = None
 
 
+@dataclass(frozen=True)
+class B2Usage:
+    stored_bytes: int
+    version_count: int
+    current_object_count: int
+    document_bytes: int
+    backup_bytes: int
+    other_bytes: int
+
+
 class ArchiveStorage:
     """Minimal interface shared by local and remote archive backends."""
 
@@ -217,6 +227,66 @@ class B2ArchiveStorage(ArchiveStorage):
             ) from exc
 
         return ArchiveLocation(backend=self.name, key=key, local_path=None)
+
+    def usage_summary(self) -> B2Usage:
+        """Return billable stored bytes across all B2 object versions.
+
+        B2 buckets are versioned. Counting only current object names can
+        understate storage, so capacity decisions sum every concrete version.
+        Delete markers carry no object bytes and are not counted.
+        """
+        stored_bytes = 0
+        version_count = 0
+        current_object_count = 0
+        document_bytes = 0
+        backup_bytes = 0
+        other_bytes = 0
+        key_marker = None
+        version_id_marker = None
+
+        while True:
+            kwargs = {"Bucket": self.bucket}
+            if key_marker:
+                kwargs["KeyMarker"] = key_marker
+            if version_id_marker:
+                kwargs["VersionIdMarker"] = version_id_marker
+
+            try:
+                response = self.client.list_object_versions(**kwargs)
+            except Exception as exc:
+                raise ArchiveStorageError(
+                    f"Could not measure B2 bucket usage: {exc}"
+                ) from exc
+
+            for item in response.get("Versions") or []:
+                size = max(0, int(item.get("Size") or 0))
+                key = str(item.get("Key") or "")
+                stored_bytes += size
+                version_count += 1
+                if item.get("IsLatest"):
+                    current_object_count += 1
+                if key.startswith("documents/"):
+                    document_bytes += size
+                elif key.startswith("database-backups/"):
+                    backup_bytes += size
+                else:
+                    other_bytes += size
+
+            if not response.get("IsTruncated"):
+                break
+            key_marker = response.get("NextKeyMarker")
+            version_id_marker = response.get("NextVersionIdMarker")
+            if not key_marker and not version_id_marker:
+                break
+
+        return B2Usage(
+            stored_bytes=stored_bytes,
+            version_count=version_count,
+            current_object_count=current_object_count,
+            document_bytes=document_bytes,
+            backup_bytes=backup_bytes,
+            other_bytes=other_bytes,
+        )
 
     def presigned_url(self, key: str, expires_seconds: int = 3600) -> str:
         try:
