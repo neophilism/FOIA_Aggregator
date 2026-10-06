@@ -115,10 +115,19 @@ REDIRECT_STATUS_CODES = {301, 302, 303, 307, 308}
 RETRYABLE_STATUS_CODES = {429, 500, 502, 503, 504}
 DOWNLOAD_CHUNK_SIZE = 64 * 1024
 PAGE_CHUNK_SIZE = 64 * 1024
+DEFAULT_BROWSER_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) "
+    "Chrome/128.0.0.0 Safari/537.36"
+)
 
 
 class UnsafeURL(ValueError):
     """Raised when a URL can target a non-public or unsupported destination."""
+
+
+class SourceAccessBlocked(RuntimeError):
+    """Public source returned an access-blocking response after compatibility retry."""
 
 
 class FileTooLarge(ValueError):
@@ -676,6 +685,49 @@ def _close_response(response) -> None:
         close()
 
 
+def _request_headers(
+    config: Config,
+    *,
+    browser_compatible: bool = False,
+    referer: Optional[str] = None,
+    xhr: bool = False,
+) -> dict[str, str]:
+    if browser_compatible:
+        headers = {
+            "User-Agent": config.crawler.get(
+                "browser_user_agent",
+                DEFAULT_BROWSER_USER_AGENT,
+            ),
+            "Accept": (
+                "text/html,application/xhtml+xml,application/xml;q=0.9,"
+                "image/avif,image/webp,*/*;q=0.8"
+            ),
+            "Accept-Language": "en-US,en;q=0.9",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        }
+    else:
+        headers = {
+            "User-Agent": config.crawler.get(
+                "user_agent",
+                "FOIAArchiveBot/0.1",
+            )
+        }
+    if referer:
+        headers["Referer"] = referer
+    if xhr:
+        headers["X-Requested-With"] = "XMLHttpRequest"
+        headers["Accept"] = "text/html, */*; q=0.01"
+    return headers
+
+
+def _browser_fallback_enabled(config: Config) -> bool:
+    value = config.crawler.get("browser_compatibility_fallback", True)
+    if isinstance(value, str):
+        return value.strip().lower() in {"1", "true", "yes", "on"}
+    return bool(value)
+
+
 def _request_with_safe_redirects(
     url: str,
     headers: dict,
@@ -859,7 +911,8 @@ def _fetch_crawl_resource(
     config: Config,
     rate_limiter: HostRateLimiter,
 ):
-    headers = {"User-Agent": config.crawler.get("user_agent", "FOIAArchiveBot/0.1")}
+    headers = _request_headers(config)
+    using_browser_fallback = False
     timeout = float(config.crawler.get("page_timeout_seconds", 30))
     max_redirects = int(config.downloader.get("max_redirects", 5))
     max_retries = int(config.downloader.get("max_retries", 3))
@@ -879,6 +932,31 @@ def _fetch_crawl_resource(
                 rate_limiter=rate_limiter,
             )
             status_code = getattr(response, "status_code", 200)
+            if (
+                status_code == 403
+                and _browser_fallback_enabled(config)
+                and not using_browser_fallback
+            ):
+                logger.info(
+                    "HTTP 403 from %s; retrying once with browser-compatible headers",
+                    final_url,
+                )
+                _close_response(response)
+                response = None
+                headers = _request_headers(config, browser_compatible=True)
+                using_browser_fallback = True
+                response, final_url = _request_with_safe_redirects(
+                    url,
+                    headers=headers,
+                    timeout=timeout,
+                    max_redirects=max_redirects,
+                    rate_limiter=rate_limiter,
+                )
+                status_code = getattr(response, "status_code", 200)
+            if status_code == 403:
+                raise SourceAccessBlocked(
+                    f"HTTP 403 after browser-compatible fallback while crawling {final_url}"
+                )
             if status_code in RETRYABLE_STATUS_CODES:
                 headers_map = getattr(response, "headers", {}) or {}
                 retry_after = headers_map.get("Retry-After") or headers_map.get("retry-after")
@@ -906,7 +984,7 @@ def _fetch_crawl_resource(
                     f"HTTP {status_code} while crawling {final_url}"
                 )
             return response, final_url
-        except (UnsafeURL, FileTooLarge):
+        except (UnsafeURL, FileTooLarge, SourceAccessBlocked):
             raise
         except (requests.RequestException, socket.gaierror):
             if response is not None:
@@ -929,16 +1007,12 @@ def _fetch_pal_resource(
     referer: Optional[str] = None,
 ):
     """Fetch one known PAL endpoint without allowing unvalidated redirects."""
-    headers = {
-        "User-Agent": config.crawler.get(
-            "user_agent",
-            "FOIAArchiveBot/0.1",
-        )
-    }
-    if referer:
-        headers["Referer"] = referer
-    if method.upper() == "POST":
-        headers["X-Requested-With"] = "XMLHttpRequest"
+    headers = _request_headers(
+        config,
+        referer=referer,
+        xhr=method.upper() == "POST",
+    )
+    using_browser_fallback = False
 
     timeout = float(config.crawler.get("page_timeout_seconds", 30))
     max_retries = int(config.downloader.get("max_retries", 3))
@@ -962,6 +1036,35 @@ def _fetch_pal_resource(
                 allow_redirects=False,
             )
             status_code = getattr(response, "status_code", 200)
+            if (
+                status_code == 403
+                and _browser_fallback_enabled(config)
+                and not using_browser_fallback
+            ):
+                _close_response(response)
+                response = None
+                headers = _request_headers(
+                    config,
+                    browser_compatible=True,
+                    referer=referer,
+                    xhr=method.upper() == "POST",
+                )
+                using_browser_fallback = True
+                rate_limiter.wait(url)
+                response = session.request(
+                    method.upper(),
+                    url,
+                    headers=headers,
+                    data=data,
+                    timeout=timeout,
+                    stream=True,
+                    allow_redirects=False,
+                )
+                status_code = getattr(response, "status_code", 200)
+            if status_code == 403:
+                raise SourceAccessBlocked(
+                    f"HTTP 403 after browser-compatible fallback while crawling PAL endpoint {url}"
+                )
             if status_code in REDIRECT_STATUS_CODES:
                 headers_map = getattr(response, "headers", {}) or {}
                 location = headers_map.get("Location") or headers_map.get("location")
@@ -998,7 +1101,7 @@ def _fetch_pal_resource(
                     f"HTTP {status_code} while crawling PAL endpoint {url}"
                 )
             return response, url
-        except (UnsafeURL, FileTooLarge):
+        except (UnsafeURL, FileTooLarge, SourceAccessBlocked):
             raise
         except (requests.RequestException, socket.gaierror):
             if response is not None:
@@ -1016,7 +1119,8 @@ def download_document(
     config: Config,
     rate_limiter: Optional[HostRateLimiter] = None,
 ) -> DownloadResult:
-    headers = {"User-Agent": config.crawler.get("user_agent", "FOIAArchiveBot/0.1")}
+    headers = _request_headers(config)
+    using_browser_fallback = False
     files_dir = Path(config.storage.get("files_dir"))
     files_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1041,6 +1145,31 @@ def download_document(
                 rate_limiter=rate_limiter,
             )
             status_code = getattr(response, "status_code", 200)
+            if (
+                status_code == 403
+                and _browser_fallback_enabled(config)
+                and not using_browser_fallback
+            ):
+                _close_response(response)
+                response = None
+                headers = _request_headers(config, browser_compatible=True)
+                using_browser_fallback = True
+                response, final_url = _request_with_safe_redirects(
+                    url,
+                    headers=headers,
+                    timeout=timeout,
+                    max_redirects=max_redirects,
+                    rate_limiter=rate_limiter,
+                )
+                status_code = getattr(response, "status_code", 200)
+            if status_code == 403:
+                return DownloadResult(
+                    status="access_blocked",
+                    error=(
+                        "HTTP 403 after browser-compatible fallback while "
+                        f"downloading {final_url}"
+                    ),
+                )
             if status_code in RETRYABLE_STATUS_CODES:
                 error = f"HTTP {status_code} while downloading {final_url}"
                 headers_map = getattr(response, "headers", {}) or {}
@@ -1125,6 +1254,7 @@ def download_document(
 
 
 PERMANENT_DOWNLOAD_FAILURE_STATUSES = {
+    "access_blocked",
     "blocked_url",
     "too_large",
     "content_mismatch",
