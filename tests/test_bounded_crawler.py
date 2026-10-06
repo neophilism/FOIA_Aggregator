@@ -280,6 +280,41 @@ class BoundedReadingRoomCrawlerTests(unittest.TestCase):
         self.assertNotIn("https://example.gov/outside/page", requested)
         self.assertNotIn("https://example.gov/reading-room/deeper", requested)
 
+    def test_root_403_uses_browser_compatible_fallback(self):
+        blocked = FakeResponse(
+            status_code=403,
+            headers={"Content-Type": "text/html"},
+        )
+        success = FakeResponse(
+            '<a href="one.pdf">One</a>',
+            status_code=200,
+            headers={"Content-Type": "text/html"},
+        )
+        headers_seen = []
+
+        def fake_get(url, **kwargs):
+            headers_seen.append(dict(kwargs.get("headers") or {}))
+            return [blocked, success][len(headers_seen) - 1]
+
+        with patch(
+            "foia_archive.scraper_core.requests.get",
+            side_effect=fake_get,
+        ):
+            crawl_reading_room(
+                self.rr_id,
+                self.config,
+                dry_run=True,
+                max_docs=20,
+            )
+
+        self.assertIn(
+            "https://example.gov/reading-room/one.pdf",
+            self._documents(),
+        )
+        self.assertEqual(headers_seen[0]["User-Agent"], "FOIAArchiveTest/1.0")
+        self.assertIn("Mozilla/5.0", headers_seen[1]["User-Agent"])
+        self.assertTrue(blocked.closed)
+
     def test_page_limit_stops_frontier_growth(self):
         config = Config(
             {
