@@ -76,6 +76,12 @@ The generic crawler also:
 
 Crawl limits and request pacing are configured under `crawler` in `config/settings.yaml`. Difficult JavaScript/search-driven reading rooms remain candidates for later site-specific adapters rather than being crawled without bounds.
 
+## Public source access compatibility
+
+Some official public reading rooms reject generic HTTP clients with HTTP 403 even when the same resource is available in a normal browser. The crawler can preserve ordinary session cookies within a reading-room crawl and retry a 403 once with conventional browser-compatible headers.
+
+Persistent 403 responses remain classified as access-blocked and visible in administrator telemetry. The crawler does not attempt CAPTCHA solving, proxy rotation, authenticated-session spoofing, or any other bypass of deliberate access controls. See `docs/SOURCE_ACCESS.md`.
+
 ## Download safety
 
 Document downloads are limited to public HTTP(S) destinations. Redirects are revalidated, private/loopback/link-local destinations are rejected, files are streamed to temporary files before atomic placement in the archive, and configurable size/retry limits live under `downloader` in `config/settings.yaml`. Retry timing is capped so a hostile or malformed `Retry-After` cannot stall the crawler indefinitely.
