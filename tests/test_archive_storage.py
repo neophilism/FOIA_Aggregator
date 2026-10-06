@@ -111,8 +111,6 @@ class ArchiveStorageTests(unittest.TestCase):
         self.assertEqual(location.key, "aa/report.pdf")
         self.assertEqual(location.local_path, "aa/report.pdf")
         self.assertTrue(backend.exists(location.key))
-        self.assertEqual(client.head_calls, 0)
-        self.assertEqual(client.list_calls, 1)
 
     def test_b2_upload_is_content_addressed_without_class_b_head_and_removes_stage_file(self):
         client = FakeS3Client()
@@ -142,6 +140,8 @@ class ArchiveStorageTests(unittest.TestCase):
             "application/pdf",
         )
         self.assertTrue(backend.exists(location.key))
+        self.assertEqual(client.head_calls, 0)
+        self.assertEqual(client.list_calls, 1)
 
     def test_existing_content_addressed_b2_object_is_not_uploaded_twice(self):
         client = FakeS3Client()
