@@ -42,6 +42,21 @@ class FakeS3Client:
         self.objects[(Bucket, Key)] = data
         self.uploads.append((Bucket, Key, kwargs))
 
+    def list_object_versions(self, Bucket, **kwargs):
+        versions = []
+        for (bucket, key), value in sorted(self.objects.items()):
+            if bucket != Bucket:
+                continue
+            versions.append(
+                {
+                    "Key": key,
+                    "VersionId": f"version-{len(versions) + 1}",
+                    "Size": len(value),
+                    "IsLatest": True,
+                }
+            )
+        return {"Versions": versions, "IsTruncated": False}
+
     def generate_presigned_url(self, operation, Params, ExpiresIn):
         return (
             f"https://signed.example/{Params['Bucket']}/{Params['Key']}"
@@ -151,6 +166,24 @@ class ArchiveStorageTests(unittest.TestCase):
 
         self.assertTrue(source.exists())
         self.assertEqual(client.uploads, [])
+
+    def test_b2_usage_summary_counts_billable_versions_by_prefix(self):
+        client = FakeS3Client()
+        client.objects[("foia-test", "documents/aa/one.pdf")] = b"12345"
+        client.objects[("foia-test", "documents/bb/two.pdf")] = b"123"
+        client.objects[
+            ("foia-test", "database-backups/backup.sqlite.gz")
+        ] = b"1234"
+        client.objects[("foia-test", "misc/value")] = b"12"
+
+        usage = self._b2(client=client).usage_summary()
+
+        self.assertEqual(usage.stored_bytes, 14)
+        self.assertEqual(usage.document_bytes, 8)
+        self.assertEqual(usage.backup_bytes, 4)
+        self.assertEqual(usage.other_bytes, 2)
+        self.assertEqual(usage.version_count, 4)
+        self.assertEqual(usage.current_object_count, 4)
 
     def test_b2_presigned_url_uses_private_object_key(self):
         backend = self._b2(client=FakeS3Client())
