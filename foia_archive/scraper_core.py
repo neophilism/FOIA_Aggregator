@@ -1497,6 +1497,12 @@ def _process_document_candidate(
                 effective_file_type,
                 max_chars=max_indexed_chars,
                 ocr=OCRSettings.from_mapping(config.data.get("ocr")),
+                legacy_office_timeout_seconds=float(
+                    (config.data.get("search") or {}).get(
+                        "legacy_office_timeout_seconds",
+                        30,
+                    )
+                ),
             )
 
             current_usage = (
