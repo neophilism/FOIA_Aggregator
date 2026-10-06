@@ -329,6 +329,16 @@ For a zero-cost public presentation deployment, the repository also includes `re
 
 The Blueprint prompts for the two Backblaze secrets during initial creation and otherwise uses the repository-defined deployment configuration.
 
+## Corpus growth and autonomous refresh
+
+The current free-tier archive is intentionally capacity-aware. Manual expansion can grow the corpus aggressively toward the Backblaze allowance while measuring actual stored bytes across B2 object versions and preserving verified SQLite checkpoints after every crawl wave.
+
+Use the GitHub Actions workflow **Expand corpus toward B2 capacity** for large one-off expansion runs.
+
+The repository also contains a twice-weekly **Autonomous corpus refresh** workflow for long-term operation. Scheduled refresh is deliberately disabled until storage is upgraded; it only activates when the repository variable `FOIA_AUTONOMOUS_REFRESH_ENABLED` is explicitly set to `true`. Manual refresh runs remain available.
+
+See `docs/CORPUS_EXPANSION.md` for the current 8.5 GB document cap, 9.0 GB total B2 target, safety rationale, and post-upgrade activation procedure.
+
 ## Future scope: international access-to-information systems
 
 The MVP is focused on U.S. federal FOIA sources. A future platform expansion should add comparable public-records and access-to-information systems outside the United States, especially jurisdictions where released records or prior request/response logs are publicly searchable.
