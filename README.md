@@ -329,6 +329,12 @@ For a zero-cost public presentation deployment, the repository also includes `re
 
 The Blueprint prompts for the two Backblaze secrets during initial creation and otherwise uses the repository-defined deployment configuration.
 
+## Administrator dashboard
+
+A protected read-only administrator dashboard is available at `/admin` when `FOIA_ADMIN_PASSWORD` is configured. It summarizes B2 capacity, archive growth, source health, 403/rate-limit failures, download/extraction pipeline status, backup freshness, database state, and recent ingestion activity.
+
+The dashboard uses HTTP Basic authentication and behaves like a 404 when no administrator password is configured. See `docs/ADMIN_DASHBOARD.md`.
+
 ## Corpus growth and autonomous refresh
 
 The current free-tier archive is intentionally capacity-aware. Manual expansion can grow the corpus aggressively toward the Backblaze allowance while measuring actual stored bytes across B2 object versions and preserving verified SQLite checkpoints after every crawl wave.

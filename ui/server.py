@@ -3,21 +3,31 @@ from __future__ import annotations
 
 import math
 import os
+import secrets
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import List, Optional
 from urllib.parse import urlencode
 from xml.sax.saxutils import escape
 
-from fastapi import FastAPI, HTTPException, Query, Request
+from fastapi import Depends, FastAPI, HTTPException, Query, Request
 from fastapi.responses import FileResponse, HTMLResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.security import HTTPBasic, HTTPBasicCredentials
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
-from foia_archive.archive_storage import ArchiveStorageError, LocalArchiveStorage, get_archive_storage
+from foia_archive.archive_storage import (
+    ArchiveStorageError,
+    B2ArchiveStorage,
+    LocalArchiveStorage,
+    get_archive_storage,
+)
+from foia_archive.database_backup import list_database_backups
 from foia_archive.storage import (
     SORT_ORDERS,
+    get_admin_dashboard_stats,
     get_archive_stats,
     get_connection,
     get_document_detail,
@@ -37,6 +47,9 @@ init_db(DB_PATH, FILES_DIR)
 app = FastAPI(title="FOIA Aggregator")
 templates = Jinja2Templates(directory="ui/templates")
 PUBLIC_BASE_URL = (os.getenv("FOIA_PUBLIC_BASE_URL") or "").strip().rstrip("/")
+PROCESS_STARTED_AT = datetime.now(timezone.utc)
+ADMIN_SECURITY = HTTPBasic(auto_error=False)
+_ADMIN_STORAGE_CACHE = {"updated": 0.0, "data": None}
 app.mount("/static", StaticFiles(directory="ui/static"), name="static")
 app.mount("/files", StaticFiles(directory=str(FILES_DIR)), name="files")
 
@@ -73,6 +86,102 @@ def human_timestamp(value: Optional[str]) -> str:
 
 
 templates.env.filters["timestamp"] = human_timestamp
+
+
+def _require_admin(
+    credentials: Optional[HTTPBasicCredentials] = Depends(ADMIN_SECURITY),
+) -> str:
+    expected_password = (os.getenv("FOIA_ADMIN_PASSWORD") or "").strip()
+    if not expected_password:
+        raise HTTPException(status_code=404, detail="Admin dashboard disabled")
+
+    expected_username = (
+        os.getenv("FOIA_ADMIN_USERNAME") or "admin"
+    ).strip() or "admin"
+    if credentials is None:
+        raise HTTPException(
+            status_code=401,
+            detail="Administrator authentication required",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+
+    username_ok = secrets.compare_digest(
+        credentials.username.encode("utf-8"),
+        expected_username.encode("utf-8"),
+    )
+    password_ok = secrets.compare_digest(
+        credentials.password.encode("utf-8"),
+        expected_password.encode("utf-8"),
+    )
+    if not (username_ok and password_ok):
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid administrator credentials",
+            headers={"WWW-Authenticate": "Basic"},
+        )
+    return expected_username
+
+
+def _admin_storage_metrics() -> dict:
+    now = time.monotonic()
+    cached = _ADMIN_STORAGE_CACHE.get("data")
+    updated = float(_ADMIN_STORAGE_CACHE.get("updated") or 0.0)
+    if cached is not None and now - updated < 300:
+        return cached
+
+    result = {
+        "backend": "unknown",
+        "error": None,
+        "stored_bytes": 0,
+        "document_bytes": 0,
+        "backup_bytes": 0,
+        "other_bytes": 0,
+        "version_count": 0,
+        "current_object_count": 0,
+        "document_cap_bytes": 0,
+        "target_total_bytes": 9_000_000_000,
+        "latest_backup_at": None,
+        "backup_count": 0,
+    }
+    try:
+        backend = get_archive_storage(config)
+        result["backend"] = backend.name
+        if isinstance(backend, B2ArchiveStorage):
+            usage = backend.usage_summary()
+            result.update(
+                {
+                    "stored_bytes": usage.stored_bytes,
+                    "document_bytes": usage.document_bytes,
+                    "backup_bytes": usage.backup_bytes,
+                    "other_bytes": usage.other_bytes,
+                    "version_count": usage.version_count,
+                    "current_object_count": usage.current_object_count,
+                    "document_cap_bytes": backend.max_archive_bytes,
+                }
+            )
+            backups = list_database_backups(config)
+            result["backup_count"] = len(backups)
+            if backups:
+                latest = backups[0].get("LastModified")
+                result["latest_backup_at"] = (
+                    latest.isoformat()
+                    if hasattr(latest, "isoformat")
+                    else str(latest or "")
+                )
+    except Exception as exc:
+        result["error"] = str(exc)
+
+    target_raw = (
+        os.getenv("FOIA_EXPANSION_TARGET_TOTAL_BYTES") or "9000000000"
+    ).strip()
+    try:
+        result["target_total_bytes"] = max(1, int(target_raw))
+    except ValueError:
+        result["target_total_bytes"] = 9_000_000_000
+
+    _ADMIN_STORAGE_CACHE["updated"] = now
+    _ADMIN_STORAGE_CACHE["data"] = result
+    return result
 
 
 def _public_origin(request: Request) -> str:
@@ -257,6 +366,53 @@ async def healthz():
         "status": "ok",
         "schema_version": schema_version,
     }
+
+
+@app.get("/admin", response_class=HTMLResponse)
+async def admin_dashboard(
+    request: Request,
+    admin_user: str = Depends(_require_admin),
+):
+    conn = get_db()
+    try:
+        public_stats = get_archive_stats(conn)
+        operational = get_admin_dashboard_stats(conn)
+        schema_version = get_schema_version(conn)
+    finally:
+        conn.close()
+
+    storage_metrics = _admin_storage_metrics()
+    target = int(storage_metrics.get("target_total_bytes") or 1)
+    storage_metrics["percent_of_target"] = min(
+        100.0,
+        100.0 * int(storage_metrics.get("stored_bytes") or 0) / target,
+    )
+    storage_metrics["remaining_to_target"] = max(
+        0,
+        target - int(storage_metrics.get("stored_bytes") or 0),
+    )
+
+    return templates.TemplateResponse(
+        request=request,
+        name="admin.html",
+        context=_template_context(
+            request,
+            admin_user=admin_user,
+            stats=public_stats,
+            operational=operational,
+            storage=storage_metrics,
+            schema_version=schema_version,
+            database_size=DB_PATH.stat().st_size if DB_PATH.exists() else 0,
+            process_started_at=PROCESS_STARTED_AT.isoformat(),
+            render_commit=(os.getenv("RENDER_GIT_COMMIT") or "").strip(),
+            autonomous_refresh_enabled=(
+                (os.getenv("FOIA_AUTONOMOUS_REFRESH_ENABLED") or "")
+                .strip()
+                .lower()
+                == "true"
+            ),
+        ),
+    )
 
 
 @app.get("/about", response_class=HTMLResponse)
