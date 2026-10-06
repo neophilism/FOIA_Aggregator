@@ -1,5 +1,6 @@
 import typer
 
+from foia_archive.archive_storage import B2ArchiveStorage, get_archive_storage
 from foia_archive.database_backup import (
     backup_database_to_b2,
     bootstrap_database_from_b2,
@@ -7,6 +8,7 @@ from foia_archive.database_backup import (
 )
 from foia_archive.engine import run_once
 from foia_archive.scheduler import run_forever
+from foia_archive.storage import get_connection
 from foia_archive.text_index import reindex_downloaded_documents
 from foia_archive.utils import load_config, parse_bool
 
@@ -112,6 +114,69 @@ def restore_db(
         overwrite=overwrite,
     )
     typer.echo(f"Restored verified database to {restored}")
+
+
+
+
+@app.command("reconcile-b2")
+def reconcile_b2(
+    config: str = "config/settings.yaml",
+):
+    """Compare SQLite archive state with the current B2 object manifest."""
+    cfg = load_config(config)
+    backend = get_archive_storage(cfg)
+    if not isinstance(backend, B2ArchiveStorage):
+        raise typer.BadParameter("reconcile-b2 requires B2 archive storage")
+
+    manifest = backend.current_object_manifest(prefix="documents/")
+    conn = get_connection(cfg.storage.get("db_path"))
+    try:
+        rows = conn.execute(
+            """
+            SELECT storage_key, MAX(COALESCE(file_size, 0)) AS file_size
+            FROM documents
+            WHERE storage_backend = 'b2'
+              AND download_status = 'downloaded'
+              AND storage_key IS NOT NULL
+              AND storage_key != ''
+            GROUP BY storage_key
+            """
+        ).fetchall()
+    finally:
+        conn.close()
+
+    database = {
+        str(row["storage_key"]): int(row["file_size"] or 0)
+        for row in rows
+    }
+    missing = sorted(set(database) - set(manifest))
+    unexpected = sorted(set(manifest) - set(database))
+    size_mismatches = sorted(
+        key
+        for key in set(database) & set(manifest)
+        if database[key] > 0 and manifest[key] != database[key]
+    )
+
+    typer.echo(
+        "B2 reconciliation: "
+        f"database={len(database)}, "
+        f"manifest={len(manifest)}, "
+        f"missing={len(missing)}, "
+        f"unexpected={len(unexpected)}, "
+        f"size_mismatches={len(size_mismatches)}"
+    )
+    for label, keys in (
+        ("missing", missing),
+        ("unexpected", unexpected),
+        ("size mismatch", size_mismatches),
+    ):
+        for key in keys[:25]:
+            typer.echo(f"{label}: {key}")
+        if len(keys) > 25:
+            typer.echo(f"{label}: ... and {len(keys) - 25} more")
+
+    if missing or size_mismatches:
+        raise typer.Exit(code=1)
 
 
 @app.command("reindex-text")
