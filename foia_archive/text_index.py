@@ -113,7 +113,8 @@ def reindex_downloaded_documents(
                             OR (
                                 dt.extraction_status = 'unsupported'
                                 AND LOWER(COALESCE(d.file_type, '')) IN (
-                                    'png', 'jpg', 'jpeg', 'tif', 'tiff'
+                                    'png', 'jpg', 'jpeg', 'tif', 'tiff',
+                                    'doc', 'xls', 'ppt'
                                 )
                             )
                         )
