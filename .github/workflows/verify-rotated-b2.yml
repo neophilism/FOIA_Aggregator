@@ -1,0 +1,50 @@
+name: Verify rotated B2 key
+
+on:
+  push:
+    branches:
+      - ops/verify-b2-rotated-key
+
+jobs:
+  verify:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+    env:
+      B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+      B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify Backblaze credential pair
+        shell: bash
+        run: |
+          python - <<'PY'
+          import os
+          import requests
+
+          key_id = (os.getenv("B2_KEY_ID") or "").strip()
+          app_key = (os.getenv("B2_APPLICATION_KEY") or "").strip()
+
+          if not key_id:
+              raise SystemExit("B2_KEY_ID secret is empty")
+          if not app_key:
+              raise SystemExit("B2_APPLICATION_KEY secret is empty")
+
+          r = requests.get(
+              "https://api.backblazeb2.com/b2api/v4/b2_authorize_account",
+              auth=(key_id, app_key),
+              timeout=30,
+          )
+          print("Backblaze authorize status:", r.status_code)
+          if r.status_code != 200:
+              raise SystemExit("Backblaze rejected the GitHub secret credential pair")
+
+          payload = r.json()
+          storage = ((payload.get("apiInfo") or {}).get("storageApi") or {})
+          allowed = storage.get("allowed") or {}
+          buckets = allowed.get("buckets") or []
+          print("PASS: GitHub B2 credential pair authorized")
+          print("Allowed bucket count:", len(buckets))
+          print("S3 endpoint present:", bool(storage.get("s3ApiUrl")))
+          PY
