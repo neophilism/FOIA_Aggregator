@@ -1,0 +1,59 @@
+name: Inspect post-38 B2 state
+
+on:
+  push:
+    branches:
+      - ops/check-post38-b2-status
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-22.04
+    env:
+      PYTHONPATH: .
+      B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+      B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+      FOIA_STORAGE_BACKEND: b2
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Inspect B2 with list operations only
+        run: |
+          python - <<'PY'
+          from foia_archive.archive_storage import B2ArchiveStorage, get_archive_storage
+          from foia_archive.utils import load_config
+
+          config = load_config("config/settings.yaml")
+          backend = get_archive_storage(config)
+          if not isinstance(backend, B2ArchiveStorage):
+              raise SystemExit("B2 storage is not configured")
+
+          usage = backend.usage_summary()
+          documents = backend.current_object_manifest(prefix="documents/")
+          backups = backend.current_object_manifest(prefix="database-backups/")
+
+          print(f"B2_USAGE_BYTES={usage.stored_bytes}")
+          print(f"B2_DOCUMENT_VERSION_BYTES={usage.document_bytes}")
+          print(f"B2_BACKUP_VERSION_BYTES={usage.backup_bytes}")
+          print(f"B2_OTHER_VERSION_BYTES={usage.other_bytes}")
+          print(f"B2_VERSION_COUNT={usage.version_count}")
+          print(f"B2_CURRENT_OBJECT_COUNT={usage.current_object_count}")
+          print(f"CURRENT_DOCUMENT_OBJECTS={len(documents)}")
+          print(f"CURRENT_DOCUMENT_BYTES={sum(documents.values())}")
+          print(f"CURRENT_BACKUP_OBJECTS={len(backups)}")
+          for key in sorted(backups)[-10:]:
+              print(f"BACKUP={key}|{backups[key]}")
+          PY
