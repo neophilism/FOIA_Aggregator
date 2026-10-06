@@ -1,7 +1,9 @@
+import subprocess
 import tempfile
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
+from unittest.mock import patch
 
 from docx import Document
 from pypdf import PdfWriter
@@ -19,6 +21,14 @@ from foia_archive.storage import (
 from foia_archive.text_extraction import extract_document_text
 from foia_archive.text_index import reindex_downloaded_documents
 from foia_archive.utils import Config
+
+
+def command_name(kind: str) -> str:
+    return {
+        "doc": "antiword",
+        "xls": "xls2csv",
+        "ppt": "catppt",
+    }[kind]
 
 
 class FullTextSearchTests(unittest.TestCase):
@@ -206,6 +216,62 @@ class TextExtractionTests(unittest.TestCase):
         self.assertIn("Paragraph searchable text", result.text)
         self.assertIn("Table Alpha", result.text)
         self.assertIn("Table Beta", result.text)
+
+    def test_extracts_legacy_doc_xls_and_ppt_with_bounded_helpers(self):
+        outputs = {
+            "doc": b"Legacy Word memorandum searchable body",
+            "xls": b"Agency,Value\nExample,42\n",
+            "ppt": b"Legacy presentation searchable slide text",
+        }
+
+        for kind, expected in (
+            ("doc", "Legacy Word memorandum"),
+            ("xls", "Agency,Value"),
+            ("ppt", "Legacy presentation"),
+        ):
+            with self.subTest(kind=kind):
+                path = self.root / f"record.{kind}"
+                path.write_bytes(b"synthetic legacy binary")
+
+                def fake_run(command, **kwargs):
+                    kwargs["stdout"].write(outputs[kind])
+                    kwargs["stdout"].flush()
+                    return subprocess.CompletedProcess(
+                        command,
+                        0,
+                        stdout=None,
+                        stderr=b"",
+                    )
+
+                with (
+                    patch(
+                        "foia_archive.text_extraction.shutil.which",
+                        return_value=f"/usr/bin/{command_name(kind)}",
+                    ),
+                    patch(
+                        "foia_archive.text_extraction.subprocess.run",
+                        side_effect=fake_run,
+                    ),
+                ):
+                    result = extract_document_text(path, kind)
+
+                self.assertEqual(result.status, "indexed")
+                self.assertEqual(result.method, "legacy_office")
+                self.assertIn(expected, result.text)
+
+    def test_missing_legacy_office_extractor_is_explicit(self):
+        path = self.root / "record.doc"
+        path.write_bytes(b"legacy")
+
+        with patch(
+            "foia_archive.text_extraction.shutil.which",
+            return_value=None,
+        ):
+            result = extract_document_text(path, "doc")
+
+        self.assertEqual(result.status, "unsupported")
+        self.assertEqual(result.method, "legacy_office")
+        self.assertIn("antiword", result.error)
 
     def test_blank_pdf_is_marked_empty_for_future_ocr(self):
         path = self.root / "blank.pdf"
