@@ -1184,6 +1184,26 @@ def update_download_failure(
         )
 
 
+def archived_storage_key_exists(
+    conn: sqlite3.Connection,
+    backend: str,
+    storage_key: str,
+) -> bool:
+    """Return whether SQLite already records a successfully archived object key."""
+    row = conn.execute(
+        """
+        SELECT 1
+        FROM documents
+        WHERE storage_backend = ?
+          AND storage_key = ?
+          AND download_status = 'downloaded'
+        LIMIT 1
+        """,
+        (backend, storage_key),
+    ).fetchone()
+    return row is not None
+
+
 def archived_remote_bytes(conn: sqlite3.Connection, backend: str) -> int:
     """Return unique archived bytes for a remote backend.
 
