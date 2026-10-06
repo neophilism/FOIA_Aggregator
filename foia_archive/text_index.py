@@ -150,6 +150,12 @@ def reindex_downloaded_documents(
                         row["file_type"],
                         max_chars=max_chars,
                         ocr=OCRSettings.from_mapping(config.data.get("ocr")),
+                        legacy_office_timeout_seconds=float(
+                            (config.data.get("search") or {}).get(
+                                "legacy_office_timeout_seconds",
+                                30,
+                            )
+                        ),
                     )
                     now = datetime.now(timezone.utc).isoformat()
                     upsert_document_text(
