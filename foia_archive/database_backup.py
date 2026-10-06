@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import re
 import sqlite3
 import tempfile
 from dataclasses import dataclass
@@ -135,8 +136,11 @@ def _upload_backup(
     key: str,
     sqlite_sha256: str,
 ) -> None:
-    size = compressed_path.stat().st_size
     try:
+        # Successful upload is authoritative here. Avoid an immediate
+        # HeadObject verification because Backblaze bills it as Class B.
+        # Restore still validates gzip structure, the checksum embedded in the
+        # backup key, and SQLite integrity.
         backend.client.upload_file(
             str(compressed_path),
             backend.bucket,
@@ -149,15 +153,6 @@ def _upload_backup(
                 },
             },
         )
-        remote = backend.client.head_object(Bucket=backend.bucket, Key=key)
-        remote_size = int(remote.get("ContentLength", -1))
-        if remote_size != size:
-            raise ArchiveStorageError(
-                f"Database backup size verification failed for {key}: "
-                f"local={size}, remote={remote_size}"
-            )
-    except ArchiveStorageError:
-        raise
     except Exception as exc:
         raise ArchiveStorageError(
             f"Database backup upload failed for {key}: {exc}"
@@ -431,10 +426,6 @@ def restore_database_from_b2(
                 key,
                 str(compressed),
             )
-            metadata = backend.client.head_object(
-                Bucket=backend.bucket,
-                Key=key,
-            )
         except Exception as exc:
             raise ArchiveStorageError(
                 f"Database backup download failed for {key}: {exc}"
@@ -454,11 +445,9 @@ def restore_database_from_b2(
                 f"Database backup is not a valid gzip stream: {key}"
             ) from exc
 
-        expected_sha = str(
-            (metadata.get("Metadata") or {}).get("sqlite-sha256") or ""
-        )
         actual_sha = digest.hexdigest()
-        if expected_sha and expected_sha != actual_sha:
+        match = re.search(r"-([0-9a-f]{12})\.sqlite\.gz$", key)
+        if match and not actual_sha.startswith(match.group(1)):
             raise ArchiveStorageError(
                 f"Database backup SHA-256 mismatch for {key}"
             )

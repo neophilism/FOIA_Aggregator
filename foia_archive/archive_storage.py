@@ -10,7 +10,6 @@ from typing import Optional
 
 import boto3
 import requests
-from botocore.exceptions import ClientError
 
 from .utils import Config
 
@@ -53,6 +52,7 @@ class ArchiveStorage:
         filename: str,
         mime_type: Optional[str] = None,
         current_usage_bytes: int = 0,
+        known_present: bool = False,
     ) -> ArchiveLocation:
         raise NotImplementedError
 
@@ -86,6 +86,7 @@ class LocalArchiveStorage(ArchiveStorage):
         filename: str,
         mime_type: Optional[str] = None,
         current_usage_bytes: int = 0,
+        known_present: bool = False,
     ) -> ArchiveLocation:
         source = Path(source_path).resolve()
         try:
@@ -160,17 +161,43 @@ class B2ArchiveStorage(ArchiveStorage):
             suffix = ""
         return f"documents/{sha256[:2]}/{sha256}{suffix}"
 
+    def current_object_manifest(self, prefix: str = "") -> dict[str, int]:
+        """Return current object keys and sizes using Class C list operations.
+
+        Backblaze bills S3 ListObjectsV2 as Class C. This is intentionally used
+        for reconciliation instead of issuing one Class B HeadObject request per
+        archived object.
+        """
+        objects: dict[str, int] = {}
+        token = None
+        while True:
+            kwargs = {"Bucket": self.bucket}
+            if prefix:
+                kwargs["Prefix"] = prefix
+            if token:
+                kwargs["ContinuationToken"] = token
+            try:
+                response = self.client.list_objects_v2(**kwargs)
+            except Exception as exc:
+                raise ArchiveStorageError(
+                    f"Could not list current B2 objects for prefix {prefix!r}: {exc}"
+                ) from exc
+
+            for item in response.get("Contents") or []:
+                key = str(item.get("Key") or "")
+                if key:
+                    objects[key] = max(0, int(item.get("Size") or 0))
+
+            if not response.get("IsTruncated"):
+                break
+            token = response.get("NextContinuationToken")
+            if not token:
+                break
+        return objects
+
     def exists(self, key: str) -> bool:
-        try:
-            self.client.head_object(Bucket=self.bucket, Key=key)
-            return True
-        except ClientError as exc:
-            response = getattr(exc, "response", {}) or {}
-            code = str((response.get("Error") or {}).get("Code", ""))
-            status = (response.get("ResponseMetadata") or {}).get("HTTPStatusCode")
-            if code in {"404", "NoSuchKey", "NotFound"} or status == 404:
-                return False
-            raise ArchiveStorageError(f"B2 head_object failed for {key}: {exc}") from exc
+        """Check one key through the Class C object manifest, never HeadObject."""
+        return key in self.current_object_manifest(prefix=key)
 
     def store_file(
         self,
@@ -180,6 +207,7 @@ class B2ArchiveStorage(ArchiveStorage):
         filename: str,
         mime_type: Optional[str] = None,
         current_usage_bytes: int = 0,
+        known_present: bool = False,
     ) -> ArchiveLocation:
         source = Path(source_path)
         if not source.is_file():
@@ -187,7 +215,7 @@ class B2ArchiveStorage(ArchiveStorage):
         key = self.key_for(sha256 or "", filename)
         size = source.stat().st_size
 
-        already_present = self.exists(key)
+        already_present = bool(known_present)
         if (
             not already_present
             and self.max_archive_bytes
@@ -202,14 +230,11 @@ class B2ArchiveStorage(ArchiveStorage):
             if not already_present:
                 extra_args = {"ContentType": mime_type} if mime_type else None
                 kwargs = {"ExtraArgs": extra_args} if extra_args else {}
+                # A successful PutObject/upload_file response is authoritative
+                # for normal ingestion. Per-object HeadObject verification is a
+                # Class B transaction and previously exhausted the daily free
+                # Class B allowance during large corpus waves.
                 self.client.upload_file(str(source), self.bucket, key, **kwargs)
-                metadata = self.client.head_object(Bucket=self.bucket, Key=key)
-                remote_size = int(metadata.get("ContentLength", -1))
-                if remote_size != size:
-                    raise ArchiveStorageError(
-                        f"B2 upload size verification failed for {key}: "
-                        f"local={size}, remote={remote_size}"
-                    )
         except StorageQuotaReached:
             raise
         except ArchiveStorageError:

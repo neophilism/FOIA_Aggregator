@@ -36,6 +36,7 @@ from .pal_adapter import (
 )
 from .storage import (
     archived_remote_bytes,
+    archived_storage_key_exists,
     associate_document_source,
     get_connection,
     get_document_by_url,
@@ -1384,6 +1385,12 @@ def _process_document_candidate(
         )
         storage_key = existing["storage_key"] or existing["local_path"]
         if storage_backend and storage_key:
+            if storage_backend == "b2":
+                # Successful B2 uploads are authoritative in SQLite during
+                # normal ingestion. Do not spend a Class B HEAD transaction on
+                # every rediscovered document. Bucket reconciliation uses a
+                # batched Class C listing separately.
+                return False
             try:
                 existing_storage = get_archive_storage(
                     config,
@@ -1521,12 +1528,25 @@ def _process_document_candidate(
                 if archive_storage.name != "local"
                 else 0
             )
+            known_present = False
+            if isinstance(archive_storage, B2ArchiveStorage) and result.sha256:
+                expected_key = archive_storage.key_for(
+                    result.sha256,
+                    filename_hint,
+                )
+                known_present = archived_storage_key_exists(
+                    conn,
+                    "b2",
+                    expected_key,
+                )
+
             location = archive_storage.store_file(
                 result.path,
                 sha256=result.sha256,
                 filename=filename_hint,
                 mime_type=result.mime_type,
                 current_usage_bytes=current_usage,
+                known_present=known_present,
             )
             update_download_metadata(
                 conn,

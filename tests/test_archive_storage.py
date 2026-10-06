@@ -25,8 +25,11 @@ class FakeS3Client:
     def __init__(self):
         self.objects = {}
         self.uploads = []
+        self.head_calls = 0
+        self.list_calls = 0
 
     def head_object(self, Bucket, Key):
+        self.head_calls += 1
         if (Bucket, Key) not in self.objects:
             raise ClientError(
                 {
@@ -41,6 +44,14 @@ class FakeS3Client:
         data = Path(Filename).read_bytes()
         self.objects[(Bucket, Key)] = data
         self.uploads.append((Bucket, Key, kwargs))
+
+    def list_objects_v2(self, Bucket, Prefix="", ContinuationToken=None):
+        self.list_calls += 1
+        contents = []
+        for (bucket, key), value in sorted(self.objects.items()):
+            if bucket == Bucket and key.startswith(Prefix):
+                contents.append({"Key": key, "Size": len(value)})
+        return {"Contents": contents, "IsTruncated": False}
 
     def list_object_versions(self, Bucket, **kwargs):
         versions = []
@@ -101,7 +112,7 @@ class ArchiveStorageTests(unittest.TestCase):
         self.assertEqual(location.local_path, "aa/report.pdf")
         self.assertTrue(backend.exists(location.key))
 
-    def test_b2_upload_is_content_addressed_verified_and_removes_stage_file(self):
+    def test_b2_upload_is_content_addressed_without_class_b_head_and_removes_stage_file(self):
         client = FakeS3Client()
         backend = self._b2(client=client)
         source = self.root / "report.pdf"
@@ -129,6 +140,8 @@ class ArchiveStorageTests(unittest.TestCase):
             "application/pdf",
         )
         self.assertTrue(backend.exists(location.key))
+        self.assertEqual(client.head_calls, 0)
+        self.assertEqual(client.list_calls, 1)
 
     def test_existing_content_addressed_b2_object_is_not_uploaded_twice(self):
         client = FakeS3Client()
@@ -144,11 +157,30 @@ class ArchiveStorageTests(unittest.TestCase):
             sha256=digest,
             filename="same.pdf",
             current_usage_bytes=4,
+            known_present=True,
         )
 
         self.assertEqual(location.key, key)
         self.assertEqual(client.uploads, [])
         self.assertFalse(source.exists())
+
+    def test_b2_manifest_uses_class_c_listing_without_head(self):
+        client = FakeS3Client()
+        client.objects[("foia-test", "documents/aa/one.pdf")] = b"12345"
+        client.objects[("foia-test", "documents/bb/two.pdf")] = b"123"
+        backend = self._b2(client=client)
+
+        manifest = backend.current_object_manifest(prefix="documents/")
+
+        self.assertEqual(
+            manifest,
+            {
+                "documents/aa/one.pdf": 5,
+                "documents/bb/two.pdf": 3,
+            },
+        )
+        self.assertEqual(client.list_calls, 1)
+        self.assertEqual(client.head_calls, 0)
 
     def test_b2_safety_cap_blocks_new_object_without_deleting_stage_file(self):
         client = FakeS3Client()

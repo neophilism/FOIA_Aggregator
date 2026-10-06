@@ -348,7 +348,7 @@ class DatabaseBackupTests(unittest.TestCase):
             conn.close()
         self.assertEqual(value, "live")
 
-    def test_restore_rejects_sha256_mismatch(self):
+    def test_restore_rejects_sha256_mismatch_without_head_metadata(self):
         now = datetime(2026, 10, 5, 16, 0, tzinfo=timezone.utc)
         with self._patch_backend():
             self.client.now = now
@@ -359,7 +359,9 @@ class DatabaseBackupTests(unittest.TestCase):
             )
 
         item = self.client.objects[("foia-test", result.key)]
-        item["metadata"]["sqlite-sha256"] = "0" * 64
+        restored_bytes = bytearray(gzip.decompress(item["body"]))
+        restored_bytes[-1:] = b"X"
+        item["body"] = gzip.compress(bytes(restored_bytes), mtime=0)
 
         with self._patch_backend():
             with self.assertRaisesRegex(ArchiveStorageError, "SHA-256 mismatch"):
