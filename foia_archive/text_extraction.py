@@ -2,6 +2,9 @@
 from __future__ import annotations
 
 import math
+import shutil
+import subprocess
+import tempfile
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Mapping, Optional
@@ -364,6 +367,89 @@ def _extract_docx(path: Path, max_chars: int) -> TextExtractionResult:
     )
 
 
+LEGACY_OFFICE_COMMANDS = {
+    "doc": ("antiword",),
+    "xls": ("xls2csv",),
+    "ppt": ("catppt",),
+}
+
+
+def _extract_legacy_office(
+    path: Path,
+    kind: str,
+    max_chars: int,
+    timeout_seconds: float,
+) -> TextExtractionResult:
+    command = LEGACY_OFFICE_COMMANDS.get(kind)
+    if command is None:
+        return TextExtractionResult(
+            status="unsupported",
+            error=f"No legacy Office extractor is configured for {kind}.",
+        )
+
+    executable = shutil.which(command[0])
+    if not executable:
+        return TextExtractionResult(
+            status="unsupported",
+            error=(
+                f"Legacy Office extractor '{command[0]}' is not installed "
+                f"for .{kind} files."
+            ),
+            method="legacy_office",
+        )
+
+    byte_limit = max(4096, max_chars * 4)
+    with tempfile.TemporaryFile(mode="w+b") as output:
+        try:
+            completed = subprocess.run(
+                [executable, *command[1:], str(path)],
+                stdout=output,
+                stderr=subprocess.PIPE,
+                timeout=max(1.0, min(float(timeout_seconds), 300.0)),
+                check=False,
+            )
+        except subprocess.TimeoutExpired:
+            return TextExtractionResult(
+                status="extraction_failed",
+                error=(
+                    f"Legacy Office extraction timed out after "
+                    f"{timeout_seconds:.1f} seconds."
+                ),
+                method="legacy_office",
+            )
+
+        stderr = (completed.stderr or b"")[:2000].decode(
+            "utf-8",
+            errors="replace",
+        ).strip()
+        if completed.returncode != 0:
+            return TextExtractionResult(
+                status="extraction_failed",
+                error=(
+                    f"{command[0]} exited with status {completed.returncode}"
+                    + (f": {stderr}" if stderr else "")
+                )[:2000],
+                method="legacy_office",
+            )
+
+        output.seek(0)
+        raw = output.read(byte_limit + 1)
+
+    output_truncated = len(raw) > byte_limit
+    raw = raw[:byte_limit]
+    try:
+        text = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        text = raw.decode("latin-1", errors="replace")
+
+    return _cap_text(
+        text,
+        max_chars,
+        method="legacy_office",
+        force_truncated=output_truncated,
+    )
+
+
 def _extract_text_like(path: Path, max_chars: int) -> TextExtractionResult:
     # Read a bounded byte window so indexing cannot create an unbounded memory
     # spike even when the archive download ceiling is much larger.
@@ -478,6 +564,7 @@ def extract_document_text(
     *,
     max_chars: int = 5_000_000,
     ocr: Optional[OCRSettings] = None,
+    legacy_office_timeout_seconds: float = 30.0,
 ) -> TextExtractionResult:
     """Extract searchable text without affecting archive success."""
     source = Path(path)
@@ -490,6 +577,13 @@ def extract_document_text(
             return _extract_pdf(source, max_chars, ocr_settings)
         if kind == "docx":
             return _extract_docx(source, max_chars)
+        if kind in LEGACY_OFFICE_COMMANDS:
+            return _extract_legacy_office(
+                source,
+                kind,
+                max_chars,
+                legacy_office_timeout_seconds,
+            )
         if kind in TEXT_LIKE_TYPES:
             return _extract_text_like(source, max_chars)
         if kind in OCR_IMAGE_TYPES:

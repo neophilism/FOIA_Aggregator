@@ -180,6 +180,9 @@ Supported extractors:
 - OCR for image-only PDF pages via Tesseract, rendered with `pypdfium2`
 - OCR for PNG, JPEG/JPG, TIFF/TIF images
 - DOCX paragraphs and tables via `python-docx`
+- legacy DOC via `antiword`
+- legacy XLS via `xls2csv`
+- legacy PPT via `catppt`
 - text-like formats including TXT, CSV, JSON, XML, RTF, and EML
 
 Extraction runs **before** a newly downloaded file is committed to its archive backend. This matters for B2 because the verified upload path removes the temporary local staging file after upload. Extraction failures do not block archival of the original record.
@@ -193,7 +196,7 @@ Each archived document receives explicit extraction state in `document_text`, in
 - `unsupported`
 - `extraction_failed`
 
-`document_text.extraction_method` records whether indexed text came from `native_text`, `ocr`, or a `mixed` PDF containing both born-digital and scanned pages.
+`document_text.extraction_method` records whether indexed text came from `native_text`, `ocr`, `mixed`, or `legacy_office`.
 
 The FTS index is keyed by the document ID and is refreshed atomically whenever extracted text is replaced. If an archived file is later found missing and a re-download fails, its stale extracted text is removed from search as well.
 
@@ -245,7 +248,7 @@ The crawler does not OCR a whole PDF indiscriminately. It keeps native text on p
 
 OCR work is bounded by page count, render DPI, per-page Tesseract timeout, image megapixels, and the existing indexed-character ceiling. If Tesseract is unavailable or OCR fails, the original file is still archived and the failure is recorded in extraction metadata rather than failing the document download.
 
-Legacy binary Office formats and audio/video transcription remain separate later phases.
+Audio/video transcription remains a later phase. Legacy DOC/XLS/PPT extraction is supported with bounded subprocess timeouts and the same indexed-character ceiling used by other extractors.
 
 ## Continuous-operation resilience
 
