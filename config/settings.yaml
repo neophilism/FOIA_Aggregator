@@ -42,6 +42,7 @@ search:
   # Bound per-document indexed text so one unusually large release cannot
   # dominate SQLite memory/disk.
   max_indexed_chars_per_document: 5000000
+  legacy_office_timeout_seconds: 30
 
 ocr:
   enabled: true
