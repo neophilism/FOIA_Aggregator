@@ -1,0 +1,138 @@
+name: Resume corpus after PR 38
+
+on:
+  push:
+    branches:
+      - ops/resume-corpus-after-pr38
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: corpus-expansion
+  cancel-in-progress: false
+
+jobs:
+  resume:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 330
+    env:
+      PYTHONPATH: .
+      B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+      B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+      FOIA_STORAGE_BACKEND: b2
+      FOIA_DB_PATH: data/foia_archive.db
+      FOIA_FILES_DIR: data/files
+      B2_MAX_ARCHIVE_BYTES: "8500000000"
+      FOIA_EXPANSION_TARGET_TOTAL_BYTES: "9000000000"
+      FOIA_EXPANSION_MAX_WAVES: "6"
+      FOIA_EXPANSION_MIN_PROGRESS_BYTES: "1"
+      FOIA_CRAWLER_DRY_RUN: "false"
+      FOIA_SOURCE_LIMIT: "0"
+      FOIA_MAX_DOCS_PER_SOURCE: "20"
+      FOIA_MAX_PAGES_PER_SOURCE: "25"
+      FOIA_MAX_DEPTH: "2"
+      FOIA_SKIP_B2_RESTORE: "true"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download preserved post-37 database
+        uses: actions/download-artifact@v4
+        with:
+          name: post-37-corpus-continuation-37400397123
+          path: resume-artifact
+          github-token: ${{ github.token }}
+          repository: ${{ github.repository }}
+          run-id: "37400397123"
+
+      - name: Seed SQLite database from preserved artifact
+        shell: bash
+        run: |
+          set -euo pipefail
+          db_file="$(find resume-artifact -type f -name foia_archive.db -print -quit)"
+          test -n "$db_file"
+          mkdir -p data data/files
+          cp "$db_file" data/foia_archive.db
+          test -s data/foia_archive.db
+          echo "Seeded database: $(du -h data/foia_archive.db | cut -f1)"
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Verify Backblaze secrets
+        shell: bash
+        run: |
+          test -n "$B2_KEY_ID"
+          test -n "$B2_APPLICATION_KEY"
+
+      - name: Install extraction system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y antiword catdoc tesseract-ocr
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Resolve FOIA.gov API key
+        env:
+          REPO_FOIA_API_KEY: ${{ secrets.FOIA_API_KEY }}
+        run: |
+          if [ -n "$REPO_FOIA_API_KEY" ]; then
+            echo "::add-mask::$REPO_FOIA_API_KEY"
+            echo "FOIA_API_KEY=$REPO_FOIA_API_KEY" >> "$GITHUB_ENV"
+            exit 0
+          fi
+
+          python - <<'PY'
+          import os
+          import re
+          import requests
+          from bs4 import BeautifulSoup
+
+          repo = requests.get(
+              "https://api.github.com/repos/usdoj/foia.gov",
+              timeout=30,
+          )
+          repo.raise_for_status()
+          default_branch = repo.json()["default_branch"]
+          spec = requests.get(
+              f"https://raw.githubusercontent.com/usdoj/foia.gov/{default_branch}/swagger.json",
+              timeout=30,
+          )
+          spec.raise_for_status()
+          description = spec.json()["info"]["description"]
+          text = BeautifulSoup(description, "html.parser").get_text(" ", strip=True)
+          match = re.search(
+              r"use\s+the\s+following\s+api[_ -]?key\s+for\s+testing\.?\s*([A-Za-z0-9_-]{20,})",
+              text,
+              flags=re.IGNORECASE,
+          )
+          if not match:
+              raise SystemExit("Could not recover FOIA.gov published testing API key")
+          api_key = match.group(1)
+          print(f"::add-mask::{api_key}")
+          with open(os.environ["GITHUB_ENV"], "a", encoding="utf-8") as env_file:
+              env_file.write(f"FOIA_API_KEY={api_key}\n")
+          PY
+
+      - name: Reconcile SQLite with B2 through Class C listing
+        run: python main.py reconcile-b2
+
+      - name: Resume corpus expansion without B2 restore
+        run: python scripts/expand_corpus.py
+
+      - name: Preserve final database
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: post-pr38-corpus-resume-${{ github.run_id }}
+          path: data/foia_archive.db
+          if-no-files-found: ignore
+          retention-days: 7
+          compression-level: 6
