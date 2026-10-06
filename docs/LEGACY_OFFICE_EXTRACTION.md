@@ -58,7 +58,8 @@ sudo apt-get install antiword catdoc
 ```
 
 The production Docker image and GitHub ingestion/test workflows install these
-dependencies automatically.
+dependencies automatically. CI also verifies that all three command-line
+extractors are present before running the test suite.
 
 ## Extraction metadata
 
