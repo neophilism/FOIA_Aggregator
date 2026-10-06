@@ -1468,12 +1468,14 @@ def _process_document_candidate(
             )
             return is_new
 
+    download_kwargs = {"rate_limiter": rate_limiter}
+    if session is not None:
+        download_kwargs["session"] = session
     result = download_document(
         canonical,
         filename_hint,
         config,
-        rate_limiter=rate_limiter,
-        session=session,
+        **download_kwargs,
     )
     if isinstance(result, Path):
         result = DownloadResult(status="downloaded", path=result)
