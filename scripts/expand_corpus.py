@@ -122,7 +122,23 @@ def main() -> None:
     files_dir = Path(config.storage.get("files_dir", "data/files"))
     files_dir.mkdir(parents=True, exist_ok=True)
 
-    restored = _restore_latest_if_available(config_path)
+    skip_b2_restore = (
+        (os.getenv("FOIA_SKIP_B2_RESTORE") or "").strip().lower()
+        in {"1", "true", "yes", "on"}
+    )
+    restored = False
+    if skip_b2_restore:
+        existing_db = Path(
+            config.storage.get("db_path", "data/foia_archive.db")
+        )
+        if existing_db.is_file() and existing_db.stat().st_size > 0:
+            restored = True
+            print(
+                "Using pre-seeded SQLite database; skipping B2 restore "
+                "to avoid Class B reads."
+            )
+    if not restored:
+        restored = _restore_latest_if_available(config_path)
     if not restored:
         init_db(
             config.storage.get("db_path", "data/foia_archive.db"),
