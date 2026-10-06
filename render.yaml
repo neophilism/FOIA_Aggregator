@@ -9,6 +9,10 @@ services:
         value: b2
       - key: FOIA_BOOTSTRAP_DB_FROM_B2
         value: "true"
+      - key: FOIA_ADMIN_USERNAME
+        value: admin
+      - key: FOIA_AUTONOMOUS_REFRESH_ENABLED
+        value: "false"
       - key: FOIA_DB_PATH
         value: /data/foia_archive.db
       - key: FOIA_FILES_DIR
