@@ -12,7 +12,17 @@ services:
       - key: FOIA_ADMIN_USERNAME
         value: admin
       - key: FOIA_AUTONOMOUS_REFRESH_ENABLED
+        value: "true"
+      - key: FOIA_CRAWLER_DRY_RUN
         value: "false"
+      - key: FOIA_MAX_DOCS_PER_SOURCE
+        value: "1"
+      - key: FOIA_CRAWLER_INTERVAL_HOURS
+        value: "6"
+      - key: FOIA_MAX_PAGES_PER_SOURCE
+        value: "5"
+      - key: FOIA_MAX_DEPTH
+        value: "1"
       - key: FOIA_DB_PATH
         value: /data/foia_archive.db
       - key: FOIA_FILES_DIR
