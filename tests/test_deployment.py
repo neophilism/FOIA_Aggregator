@@ -147,6 +147,20 @@ class RenderBlueprintTests(unittest.TestCase):
             env["FOIA_BOOTSTRAP_DB_FROM_B2"]["value"],
             "true",
         )
+        self.assertEqual(
+            env["FOIA_AUTONOMOUS_REFRESH_ENABLED"]["value"],
+            "true",
+        )
+        self.assertEqual(env["FOIA_CRAWLER_DRY_RUN"]["value"], "false")
+        self.assertEqual(env["FOIA_MAX_DOCS_PER_SOURCE"]["value"], "1")
+        self.assertEqual(env["FOIA_CRAWLER_INTERVAL_HOURS"]["value"], "6")
+        self.assertEqual(env["FOIA_MAX_PAGES_PER_SOURCE"]["value"], "5")
+        self.assertEqual(env["FOIA_MAX_DEPTH"]["value"], "1")
+
+        entrypoint = Path("docker-entrypoint.sh").read_text(encoding="utf-8")
+        self.assertIn("FOIA_AUTONOMOUS_REFRESH_ENABLED", entrypoint)
+        self.assertIn("python /app/main.py daemon", entrypoint)
+
         self.assertFalse(env["B2_KEY_ID"]["sync"])
         self.assertFalse(env["B2_APPLICATION_KEY"]["sync"])
         self.assertNotIn("value", env["B2_KEY_ID"])
