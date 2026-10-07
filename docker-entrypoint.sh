@@ -17,4 +17,11 @@ case "${FOIA_BOOTSTRAP_DB_FROM_B2:-false}" in
     ;;
 esac
 
+case "${FOIA_AUTONOMOUS_REFRESH_ENABLED:-false}" in
+  1|true|TRUE|yes|YES|on|ON)
+    echo "Starting autonomous FOIA crawl processor."
+    gosu foia python /app/main.py daemon &
+    ;;
+esac
+
 exec gosu foia "$@"
