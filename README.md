@@ -1,6 +1,10 @@
 # FOIA Aggregator
 
-Minimal FOIA archive engine that discovers agency reading rooms from FOIA.gov (via the `agency_components` API), scrapes document links, and exposes a simple search UI.
+An expanding, provenance-preserving archive of publicly released U.S. federal FOIA records, with agency/component discovery, lawful multi-source crawling, durable Backblaze B2 preservation, full-text extraction, public search, and operational coverage tracking.
+
+**Complete development and independent-account handoff plan:** [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md). This includes the approved ten-unit operating roadmap and the additional fourteen-unit broad-corpus program. **Priority:** grow verified coverage of available official and third-party FOIA records before substantially developing FOIA Bias Analysis or Send FOIA Log Requests.
+
+**Other starting points:** [docs/CORPUS_EXPANSION.md](docs/CORPUS_EXPANSION.md) for B2/storage limits; [docs/SOURCE_ACCESS.md](docs/SOURCE_ACCESS.md) for lawful crawling; [docs/PRESENTATION_DEPLOYMENT.md](docs/PRESENTATION_DEPLOYMENT.md) for deployment. The existing web UI is not a claim that all federal FOIA records have been archived.
 
 ## Setup
 
