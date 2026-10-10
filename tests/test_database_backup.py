@@ -221,6 +221,27 @@ class DatabaseBackupTests(unittest.TestCase):
         self.assertEqual(upload.call_count, 1)
         self.assertTrue(self.db_path.is_file())
 
+    def test_native_fallback_after_repeated_s3_tls_failures(self):
+        import os
+        from botocore.exceptions import SSLError
+
+        tls_error = SSLError(
+            endpoint_url="https://s3.example.invalid", error=OSError("TLS EOF")
+        )
+        with self._patch_backend(), patch.object(
+            self.client, "upload_file", side_effect=tls_error
+        ) as upload, patch(
+            "foia_archive.database_backup._native_upload_backup"
+        ) as native, patch(
+            "foia_archive.database_backup.time.sleep"
+        ), patch.dict(
+            os.environ, {"B2_KEY_ID": "key", "B2_APPLICATION_KEY": "value"}
+        ):
+            backup_database_to_b2(self.config, force=True)
+
+        self.assertEqual(upload.call_count, 3)
+        native.assert_called_once()
+
     def test_backup_due_uses_latest_remote_backup_timestamp(self):
         latest = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
         self.client.objects[("foia-test", "database-backups/existing.sqlite.gz")] = {
