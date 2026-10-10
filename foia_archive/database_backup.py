@@ -200,7 +200,7 @@ def _native_upload_backup(
 
             headers = {
                 "Authorization": upload_token,
-                "X-Bz-File-Name": quote(key, safe="/"),
+                "X-Bz-File-Name": quote(key, safe=""),
                 "Content-Type": "application/gzip",
                 "Content-Length": str(expected_size),
                 "X-Bz-Content-Sha1": sha1,
