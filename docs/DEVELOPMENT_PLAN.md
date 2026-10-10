@@ -156,9 +156,9 @@ Every FC item must be implemented in PR-sized increments with clear source inven
 Baseline local preparation (inspect README and pinned requirements first):
 
     python -m pip install -r requirements.txt
-    python -m pytest -q
+    python -m unittest discover -s tests -v
 
-If pytest CLI is not present in the current dependency set, run the actual repo test runner and record the command; do not silently change production dependencies. Additional verified commands already exposed by main.py:
+The current tests use Python's standard unittest module; use the existing discovery command above. If a later CI revision changes the runner, follow its authoritative tested invocation instead. Additional commands exposed by main.py:
 
     python main.py run --dry-run true --max-docs-per-source 10
     python main.py run --dry-run false --max-docs-per-source 10
@@ -185,7 +185,7 @@ Pre-release signoff: unique authoritative writer; two successful serialized runs
 3. Claim the next unowned ready unit with no conflicting PR. Work in small, tested PRs with fixture coverage, reviewed migrations, clear deployment effects, and user-visible status. Chain green, conflict-free PRs where authorized; do not pause just to request routine implementation decisions.
 4. Never run two mutating ingestion jobs concurrently. Make read-only audit and backup verification precede any live recovery promotion. Never lower corpus counts to make production appear healthy.
 5. After merge, validate actual scheduled run, B2 checkpoint, Render search and Engine Room status. Mark states separately: planned / in progress / PR merged / deployed / corpus-synchronized / validated / field-verified. If blocked by permission, API limit, source denial or storage/budget, record precise evidence and the minimal owner action. Continue independent tasks.
-6. Do not begin big FOIA Bias Analysis or mass FOIA request operations merely because the UI works. Prioritize FC-14 broad-corporal coverage evidence first.
+6. Do not begin big FOIA Bias Analysis or mass FOIA request operations merely because the UI works. Prioritize FC-14 broad-corpus coverage evidence first.
 7. Refresh this document when user-approved product constraints change; never overwrite original FA 10 milestones silently. The completeness claim is measured by verified documents from varied primary/third-party sources, not by a declaration that software is done.
 
 ## 9. Release definition of done
