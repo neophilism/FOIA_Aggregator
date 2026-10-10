@@ -69,7 +69,7 @@ jobs:
           import sqlite3
           import tempfile
 
-                    from foia_archive.archive_storage import B2ArchiveStorage, get_archive_storage
+          from foia_archive.archive_storage import B2ArchiveStorage, get_archive_storage
           from foia_archive.database_backup import _upload_backup
           from foia_archive.utils import load_config
 
