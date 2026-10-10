@@ -21,7 +21,7 @@ on:
         default: "1"
 
 concurrency:
-  group: seed-presentation-corpus
+  group: foia-b2-single-writer
   cancel-in-progress: false
 
 jobs:
