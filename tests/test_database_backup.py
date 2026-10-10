@@ -282,6 +282,7 @@ class DatabaseBackupTests(unittest.TestCase):
 
         def upload(url, headers, data, timeout):
             self.assertEqual(url, "https://pod005.backblazeb2.com/upload")
+            self.assertEqual(headers["X-Bz-File-Name"], "database-backups%2Fsample.sqlite.gz")
             self.assertEqual(headers["Content-Length"], str(packed.stat().st_size))
             self.assertEqual(headers["X-Bz-Content-Sha1"], expected_sha1)
             self.assertEqual(headers["X-Bz-Info-sqlite-sha256"], sqlite_hash)
