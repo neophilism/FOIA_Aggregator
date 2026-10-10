@@ -50,6 +50,14 @@ jobs:
             --name post-pr38-corpus-resume-37472478661 --dir recovery
           test -s recovery/foia_archive.db
 
+      - name: Retain a fresh recovery copy for 90 days
+        uses: actions/upload-artifact@v4
+        with:
+          name: foia-recovery-preserved-${{ github.run_id }}
+          path: recovery/foia_archive.db
+          if-no-files-found: error
+          retention-days: 90
+
       - name: Validate and preserve without promoting to production
         shell: bash
         run: |
@@ -61,7 +69,7 @@ jobs:
           import sqlite3
           import tempfile
 
-                    from foia_archive.archive_storage import B2ArchiveStorage, get_archive_storage
+          from foia_archive.archive_storage import B2ArchiveStorage, get_archive_storage
           from foia_archive.database_backup import _upload_backup
           from foia_archive.utils import load_config
 
