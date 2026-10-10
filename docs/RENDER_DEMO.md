@@ -78,11 +78,24 @@ Also confirm:
 - archived-copy links redirect through signed B2 URLs;
 - source-provenance links remain visible.
 
+## Scheduled ingestion and single-writer policy
+
+The twice-weekly GitHub Actions **Autonomous corpus refresh** workflow runs a
+single conservatively bounded wave. It is serialized with manual expansion
+and presentation seeding through the shared `foia-b2-single-writer` concurrency
+group. This prevents two GitHub Actions crawlers from starting from the same
+B2 SQLite snapshot and overwriting each other's metadata. The Render Free
+service is read-only and continues restoring the newest checkpoint on cold
+start. Keep storage below the 8.5 GB document cap and the 9 GB total target.
+
+The GitHub Actions workflow cannot coordinate with separately started
+Render-background crawlers; do not enable those on the same SQLite/B2 corpus.
+
 ## Crawler strategy
 
 Do not run the continuous crawler on the Free presentation service.
 
-Continue expanding the corpus with the repository's **Seed presentation corpus** GitHub Actions workflow. Each successful seed run archives binaries to B2 and writes a fresh verified SQLite snapshot. Redeploying or cold-starting the web service will then restore the latest snapshot.
+Continue expanding the corpus with the repository's **Seed presentation corpus** GitHub Actions workflow, or the conservative scheduled refresh. Each successful seed run archives binaries to B2 and writes a fresh verified SQLite snapshot. Redeploying or cold-starting the web service will then restore the latest snapshot.
 
 ## After the demonstration
 
