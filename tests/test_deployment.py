@@ -135,7 +135,7 @@ class RecoveryWorkflowSyntaxTests(unittest.TestCase):
             if "run" in step and "python - <<'PY'" in step["run"]
         ]
         self.assertEqual(len(scripts), 1)
-        body = scripts[0].split("python - <<'PY'\\n", 1)[1].rsplit("\\nPY", 1)[0]
+        body = scripts[0].split("python - <<'PY'\n", 1)[1].rsplit("\nPY", 1)[0]
         compile(body, "preserve-recovery-artifact-workflow", "exec")
 
 
