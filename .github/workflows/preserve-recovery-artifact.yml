@@ -1,0 +1,115 @@
+name: Preserve October 6 recovery database to B2
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/preserve-recovery-artifact.yml
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+concurrency:
+  group: foia-recovery-artifact
+  cancel-in-progress: false
+
+jobs:
+  preserve:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 50
+    env:
+      PYTHONPATH: .
+      GH_TOKEN: ${{ github.token }}
+      B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+      B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+      FOIA_STORAGE_BACKEND: b2
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Verify required secrets
+        shell: bash
+        run: |
+          test -n "$B2_KEY_ID"
+          test -n "$B2_APPLICATION_KEY"
+
+      - name: Download expiring recovery artifact
+        shell: bash
+        run: |
+          mkdir -p recovery
+          gh run download 37472478661 --repo neophilism/FOIA_Aggregator \
+            --name post-pr38-corpus-resume-37472478661 --dir recovery
+          test -s recovery/foia_archive.db
+
+      - name: Validate and preserve without promoting to production
+        shell: bash
+        run: |
+          python - <<'PY'
+          import gzip
+          import hashlib
+          import os
+          from pathlib import Path
+          import sqlite3
+          import tempfile
+
+          from boto3.s3.transfer import TransferConfig
+          from foia_archive.archive_storage import B2ArchiveStorage, get_archive_storage
+          from foia_archive.utils import load_config
+
+          source = Path("recovery/foia_archive.db")
+          with sqlite3.connect(f"file:{source.resolve()}?mode=ro", uri=True) as conn:
+              result = conn.execute("PRAGMA quick_check").fetchone()
+              if not result or result[0] != "ok":
+                  raise SystemExit("Recovery artifact failed SQLite quick_check")
+              count = conn.execute(
+                  "SELECT COUNT(*) FROM documents WHERE download_status = 'downloaded'"
+              ).fetchone()[0]
+              if count < 1:
+                  raise SystemExit("Recovery artifact has no downloaded documents")
+          digest = hashlib.sha256()
+          key_root = "recovery-artifacts/20261006-run-37472478661"
+          with tempfile.TemporaryDirectory() as temp:
+              packed = Path(temp) / "recovery.sqlite.gz"
+              with source.open("rb") as inp, gzip.open(packed, "wb") as out:
+                  while True:
+                      block = inp.read(1024 * 1024)
+                      if not block:
+                          break
+                      digest.update(block)
+                      out.write(block)
+              key = key_root + "-" + digest.hexdigest()[:12] + ".sqlite.gz"
+              backend = get_archive_storage(load_config("config/settings.yaml"))
+              if not isinstance(backend, B2ArchiveStorage):
+                  raise SystemExit("B2 archive backend not configured")
+              size = packed.stat().st_size
+              present = backend.current_object_manifest(prefix=key).get(key)
+              if present is None:
+                  backend.client.upload_file(
+                      str(packed), backend.bucket, key,
+                      ExtraArgs={"ContentType": "application/gzip",
+                                 "Metadata": {"sqlite-sha256": digest.hexdigest(),
+                                              "format": "sqlite3-gzip-recovery"}},
+                      Config=TransferConfig(multipart_threshold=256 * 1024 * 1024,
+                                            use_threads=False),
+                  )
+                  present = backend.current_object_manifest(prefix=key).get(key)
+              if present != size:
+                  raise SystemExit("Could not reconcile recovery object in B2")
+              print("Non-production recovery snapshot preserved:", key)
+              print("Archived document rows:", count)
+              if os.getenv("GITHUB_STEP_SUMMARY"):
+                  with open(os.environ["GITHUB_STEP_SUMMARY"], "a") as summary:
+                      summary.write(
+                          f"Preserved recovery artifact in B2 as \`{key}\` "
+                          f"({count:,} archived rows). Not promoted to live SQLite.\\n"
+                      )
+          PY
