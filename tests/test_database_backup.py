@@ -24,7 +24,7 @@ class FakeBackupS3Client:
         self.version_counter = 0
         self.now = datetime(2026, 10, 5, 16, 0, tzinfo=timezone.utc)
 
-    def upload_file(self, Filename, Bucket, Key, ExtraArgs=None):
+    def upload_file(self, Filename, Bucket, Key, ExtraArgs=None, Config=None):
         self.version_counter += 1
         self.objects[(Bucket, Key)] = {
             "body": Path(Filename).read_bytes(),
@@ -166,6 +166,60 @@ class DatabaseBackupTests(unittest.TestCase):
 
         self.assertEqual(value, "preserved")
         self.assertEqual(integrity, "ok")
+
+    def test_checkpoint_upload_recovers_from_transient_tls_failure(self):
+        now = datetime(2026, 10, 5, 17, 0, tzinfo=timezone.utc)
+        self.client.now = now
+        original_upload = self.client.upload_file
+        attempts = []
+
+        def fail_once(*args, **kwargs):
+            attempts.append(1)
+            if len(attempts) == 1:
+                raise OSError("simulated TLS EOF before upload")
+            return original_upload(*args, **kwargs)
+
+        with self._patch_backend(), patch.object(
+            self.client, "upload_file", side_effect=fail_once
+        ), patch("foia_archive.database_backup.time.sleep"):
+            result = backup_database_to_b2(self.config, force=True, now=now)
+
+        self.assertEqual(len(attempts), 2)
+        self.assertEqual(self.client.version_counter, 1)
+        self.assertIn(("foia-test", result.key), self.client.objects)
+
+    def test_lost_success_response_does_not_upload_duplicate_version(self):
+        now = datetime(2026, 10, 5, 17, 0, tzinfo=timezone.utc)
+        self.client.now = now
+        original_upload = self.client.upload_file
+        attempts = []
+
+        def upload_then_lose_response(*args, **kwargs):
+            attempts.append(1)
+            original_upload(*args, **kwargs)
+            raise OSError("simulated TLS EOF after successful upload")
+
+        with self._patch_backend(), patch.object(
+            self.client, "upload_file", side_effect=upload_then_lose_response
+        ), patch("foia_archive.database_backup.time.sleep"):
+            result = backup_database_to_b2(self.config, force=True, now=now)
+
+        self.assertEqual(len(attempts), 1)
+        self.assertEqual(self.client.version_counter, 1)
+        self.assertIn(("foia-test", result.key), self.client.objects)
+
+    def test_unknown_upload_state_fails_closed_without_blind_retry(self):
+        now = datetime(2026, 10, 5, 17, 0, tzinfo=timezone.utc)
+        with self._patch_backend(), patch.object(
+            self.client, "upload_file", side_effect=OSError("TLS EOF")
+        ) as upload, patch.object(
+            self.backend, "current_object_manifest",
+            side_effect=OSError("B2 listing also failed"),
+        ):
+            with self.assertRaisesRegex(ArchiveStorageError, "status is unknown"):
+                backup_database_to_b2(self.config, force=True, now=now)
+        self.assertEqual(upload.call_count, 1)
+        self.assertTrue(self.db_path.is_file())
 
     def test_backup_due_uses_latest_remote_backup_timestamp(self):
         latest = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)

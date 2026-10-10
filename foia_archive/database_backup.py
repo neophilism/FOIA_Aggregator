@@ -6,10 +6,13 @@ import hashlib
 import re
 import sqlite3
 import tempfile
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+from boto3.s3.transfer import TransferConfig
 
 from .archive_storage import ArchiveStorageError, B2ArchiveStorage, get_archive_storage
 from .utils import Config, logger
@@ -136,27 +139,71 @@ def _upload_backup(
     key: str,
     sqlite_sha256: str,
 ) -> None:
-    try:
-        # Successful upload is authoritative here. Avoid an immediate
-        # HeadObject verification because Backblaze bills it as Class B.
-        # Restore still validates gzip structure, the checksum embedded in the
-        # backup key, and SQLite integrity.
-        backend.client.upload_file(
-            str(compressed_path),
-            backend.bucket,
-            key,
-            ExtraArgs={
-                "ContentType": "application/gzip",
-                "Metadata": {
-                    "sqlite-sha256": sqlite_sha256,
-                    "format": "sqlite3-gzip",
+    """Upload a checkpoint without a per-object Class B HEAD request.
+
+    A transient TLS failure can occur *after* B2 accepts an upload. Before
+    retrying, use an exact-key Class C listing so a lost response does not
+    create a second billable object version in a versioned bucket.
+    """
+    expected_size = compressed_path.stat().st_size
+    transfer = TransferConfig(
+        multipart_threshold=256 * 1024 * 1024,
+        multipart_chunksize=32 * 1024 * 1024,
+        max_concurrency=2,
+        use_threads=False,
+    )
+    for attempt in range(1, 4):
+        try:
+            backend.client.upload_file(
+                str(compressed_path),
+                backend.bucket,
+                key,
+                ExtraArgs={
+                    "ContentType": "application/gzip",
+                    "Metadata": {
+                        "sqlite-sha256": sqlite_sha256,
+                        "format": "sqlite3-gzip",
+                    },
                 },
-            },
-        )
-    except Exception as exc:
-        raise ArchiveStorageError(
-            f"Database backup upload failed for {key}: {exc}"
-        ) from exc
+                Config=transfer,
+            )
+            return
+        except Exception as exc:
+            # A failed client call does not necessarily mean the object was
+            # never committed. If listing fails, stop rather than risk a
+            # duplicate object version through a blind retry.
+            try:
+                existing_size = backend.current_object_manifest(prefix=key).get(key)
+            except Exception as reconciliation_error:
+                raise ArchiveStorageError(
+                    "Checkpoint upload status is unknown after an error; "
+                    "B2 reconciliation failed. Retain the local database "
+                    "and reconcile B2 before retrying."
+                ) from reconciliation_error
+
+            if existing_size is not None:
+                if existing_size != expected_size:
+                    raise ArchiveStorageError(
+                        "Checkpoint key already exists in B2 with a different "
+                        "size; refusing to overwrite a possible recovery point."
+                    ) from exc
+                logger.warning(
+                    "Checkpoint upload response failed, but B2 Class C listing "
+                    "confirms the expected object size for %s", key
+                )
+                return
+
+            if attempt == 3:
+                raise ArchiveStorageError(
+                    f"Database backup upload failed after {attempt} attempts "
+                    f"for {key}: {exc}"
+                ) from exc
+            logger.warning(
+                "Checkpoint upload attempt %s failed for %s; no B2 object "
+                "was committed. Retrying after a bounded delay: %s",
+                attempt, key, type(exc).__name__,
+            )
+            time.sleep(2 ** attempt)
 
 
 def _list_exact_object_versions(
