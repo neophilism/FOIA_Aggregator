@@ -1,0 +1,45 @@
+name: Audit October 6 recovery database
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/audit-recovered-database.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: foia-recovery-audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 40
+    env:
+      PYTHONPATH: .
+      GH_TOKEN: ${{ github.token }}
+      B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+      B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+      FOIA_STORAGE_BACKEND: b2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install requirements
+        run: pip install -r requirements.txt
+      - name: Download recovery artifact
+        run: |
+          test -n "$B2_KEY_ID"
+          test -n "$B2_APPLICATION_KEY"
+          mkdir -p recovery
+          gh run download 37472478661 --repo neophilism/FOIA_Aggregator \
+            --name post-pr38-corpus-resume-37472478661 --dir recovery
+          test -s recovery/foia_archive.db
+      - name: Compare candidate and B2 manifest without modifying production
+        run: python scripts/audit_recovery_database.py recovery/foia_archive.db
