@@ -61,8 +61,8 @@ jobs:
           import sqlite3
           import tempfile
 
-          from boto3.s3.transfer import TransferConfig
-          from foia_archive.archive_storage import B2ArchiveStorage, get_archive_storage
+                    from foia_archive.archive_storage import B2ArchiveStorage, get_archive_storage
+          from foia_archive.database_backup import _upload_backup
           from foia_archive.utils import load_config
 
           source = Path("recovery/foia_archive.db")
@@ -93,14 +93,7 @@ jobs:
               size = packed.stat().st_size
               present = backend.current_object_manifest(prefix=key).get(key)
               if present is None:
-                  backend.client.upload_file(
-                      str(packed), backend.bucket, key,
-                      ExtraArgs={"ContentType": "application/gzip",
-                                 "Metadata": {"sqlite-sha256": digest.hexdigest(),
-                                              "format": "sqlite3-gzip-recovery"}},
-                      Config=TransferConfig(multipart_threshold=256 * 1024 * 1024,
-                                            use_threads=False),
-                  )
+                  _upload_backup(backend, packed, key, digest.hexdigest())
                   present = backend.current_object_manifest(prefix=key).get(key)
               if present != size:
                   raise SystemExit("Could not reconcile recovery object in B2")
