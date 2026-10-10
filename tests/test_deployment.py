@@ -123,6 +123,22 @@ class DeploymentConfigTests(unittest.TestCase):
         self.assertEqual(config.storage["backend"], "local")
 
 
+class RecoveryWorkflowSyntaxTests(unittest.TestCase):
+    def test_inline_recovery_program_parses(self):
+        workflow = yaml.safe_load(
+            Path(".github/workflows/preserve-recovery-artifact.yml")
+            .read_text(encoding="utf-8")
+        )
+        steps = workflow["jobs"]["preserve"]["steps"]
+        scripts = [
+            step["run"] for step in steps
+            if "run" in step and "python - <<'PY'" in step["run"]
+        ]
+        self.assertEqual(len(scripts), 1)
+        body = scripts[0].split("python - <<'PY'\\n", 1)[1].rsplit("\\nPY", 1)[0]
+        compile(body, "preserve-recovery-artifact-workflow", "exec")
+
+
 class RenderBlueprintTests(unittest.TestCase):
     def test_free_render_blueprint_uses_b2_bootstrap_without_committed_secrets(self):
         blueprint = yaml.safe_load(
