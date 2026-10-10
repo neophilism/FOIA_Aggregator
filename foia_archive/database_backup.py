@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import gzip
 import hashlib
+import os
 import re
 import sqlite3
 import tempfile
@@ -11,7 +12,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+from urllib.parse import quote
 
+import requests
+from botocore.exceptions import SSLError as BotocoreSSLError
 from boto3.s3.transfer import TransferConfig
 
 from .archive_storage import ArchiveStorageError, B2ArchiveStorage, get_archive_storage
@@ -133,6 +137,126 @@ def database_backup_due(
     return (now - latest).total_seconds() >= interval_seconds
 
 
+def _native_upload_backup(
+    backend: B2ArchiveStorage,
+    compressed_path: Path,
+    key: str,
+    sqlite_sha256: str,
+) -> None:
+    """Fall back to the documented B2 Native API when S3 TLS fails.
+
+    The native upload URL points to a different B2 storage pod. Every failed
+    request is reconciled with a Class C listing before trying a new pod.
+    TLS verification stays on; a bucket-scoped key is required.
+    """
+    key_id = (os.getenv("B2_KEY_ID") or "").strip()
+    application_key = (os.getenv("B2_APPLICATION_KEY") or "").strip()
+    if not key_id or not application_key:
+        raise ArchiveStorageError("B2 credentials required for native upload fallback")
+
+    authorization = requests.get(
+        "https://api.backblazeb2.com/b2api/v4/b2_authorize_account",
+        auth=(key_id, application_key), timeout=30,
+    )
+    authorization.raise_for_status()
+    payload = authorization.json()
+    token = str(payload.get("authorizationToken") or "")
+    storage = ((payload.get("apiInfo") or {}).get("storageApi") or {})
+    api_url = str(storage.get("apiUrl") or "").rstrip("/")
+    allowed = storage.get("allowed") or {}
+    buckets = allowed.get("buckets") or []
+    bucket = next(
+        (item for item in buckets if item.get("name") == backend.bucket), None
+    )
+    bucket_id = str((bucket or {}).get("id") or "")
+    if not token or not api_url.startswith("https://") or not bucket_id:
+        raise ArchiveStorageError(
+            "Native B2 credentials do not authorize the configured bucket"
+        )
+    if "writeFiles" not in (allowed.get("capabilities") or []):
+        raise ArchiveStorageError("B2 native fallback key lacks writeFiles")
+
+    expected_size = compressed_path.stat().st_size
+    compressed_sha1 = hashlib.sha1()
+    with compressed_path.open("rb") as file:
+        while chunk := file.read(1024 * 1024):
+            compressed_sha1.update(chunk)
+    sha1 = compressed_sha1.hexdigest()
+
+    for attempt in range(1, 6):
+        try:
+            upload_data = requests.get(
+                f"{api_url}/b2api/v4/b2_get_upload_url",
+                headers={"Authorization": token},
+                params={"bucketId": bucket_id},
+                timeout=30,
+            )
+            upload_data.raise_for_status()
+            destination = upload_data.json()
+            upload_url = str(destination.get("uploadUrl") or "")
+            upload_token = str(destination.get("authorizationToken") or "")
+            if not upload_url.startswith("https://") or not upload_token:
+                raise ArchiveStorageError("Native B2 upload URL is unavailable")
+
+            headers = {
+                "Authorization": upload_token,
+                "X-Bz-File-Name": quote(key, safe=""),
+                "Content-Type": "application/gzip",
+                "Content-Length": str(expected_size),
+                "X-Bz-Content-Sha1": sha1,
+                "X-Bz-Info-sqlite-sha256": sqlite_sha256,
+                "X-Bz-Info-format": "sqlite3-gzip",
+            }
+            with compressed_path.open("rb") as file:
+                reply = requests.post(
+                    upload_url, headers=headers, data=file, timeout=(30, 180),
+                )
+            reply.raise_for_status()
+            receipt = reply.json()
+            if (
+                receipt.get("fileName") != key
+                or int(receipt.get("contentLength", -1)) != expected_size
+                or receipt.get("contentSha1") != sha1
+            ):
+                raise ArchiveStorageError(
+                    "Native B2 upload receipt did not match checkpoint"
+                )
+            return
+        except requests.RequestException as exc:
+            # Do not retry blindly: B2 could have committed a file whose
+            # response was lost. An unknown manifest state requires operator
+            # reconciliation rather than risking duplicate billable versions.
+            try:
+                present = backend.current_object_manifest(prefix=key).get(key)
+            except Exception as list_exc:
+                raise ArchiveStorageError(
+                    "Native B2 upload status unknown; Class C listing failed"
+                ) from list_exc
+            if present is not None:
+                if present != expected_size:
+                    raise ArchiveStorageError(
+                        "Native B2 checkpoint key has unexpected size"
+                    ) from exc
+                logger.warning(
+                    "Native B2 upload response was lost; listed checkpoint %s",
+                    key,
+                )
+                return
+            if attempt == 5 or (
+                getattr(exc, "response", None) is not None
+                and exc.response.status_code in (401, 403)
+            ):
+                raise ArchiveStorageError(
+                    "Native B2 upload failed after bounded retries: "
+                    + type(exc).__name__
+                ) from exc
+            logger.warning(
+                "Native B2 upload failed, trying a fresh upload URL (%s/5): %s",
+                attempt, type(exc).__name__,
+            )
+            time.sleep(min(2 ** attempt, 8))
+
+
 def _upload_backup(
     backend: B2ArchiveStorage,
     compressed_path: Path,
@@ -194,6 +318,23 @@ def _upload_backup(
                 return
 
             if attempt == 3:
+                if isinstance(exc, BotocoreSSLError) and (
+                    os.getenv("B2_KEY_ID") and os.getenv("B2_APPLICATION_KEY")
+                ):
+                    logger.warning(
+                        "S3 B2 upload encountered repeated TLS failures; "
+                        "trying a verified B2 Native API upload for %s", key,
+                    )
+                    try:
+                        _native_upload_backup(
+                            backend, compressed_path, key, sqlite_sha256
+                        )
+                        return
+                    except Exception as native_error:
+                        raise ArchiveStorageError(
+                            "S3 and B2 Native checkpoint uploads both failed: "
+                            + type(native_error).__name__
+                        ) from native_error
                 raise ArchiveStorageError(
                     f"Database backup upload failed after {attempt} attempts "
                     f"for {key}: {exc}"
