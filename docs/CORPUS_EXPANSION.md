@@ -123,3 +123,14 @@ When the archive has approximately 1 TB available:
 4. retain a meaningful percentage of total capacity as operational headroom rather than targeting 100% utilization.
 
 The administrator dashboard should expose the current cap, actual billable B2 usage, remaining headroom, backup bytes, document bytes, recent ingestion velocity, and whether autonomous refresh is enabled.
+
+## Checkpoint upload recovery
+
+A TLS EOF during an S3 multipart upload does not establish that an upload
+was rejected. Database checkpoints now use a bounded retry policy, with a
+Class C exact-key listing before any retry to avoid creating duplicate B2
+versions after an ambiguous response. Smaller compressed checkpoints avoid
+multipart upload where feasible. If the object state cannot be reconciled,
+the run fails closed; the local SQLite database must be retained and reviewed
+before the next ingestion run. A successful upload is still verified on restore
+against its embedded checksum and SQLite integrity. Do not disable TLS checks.
