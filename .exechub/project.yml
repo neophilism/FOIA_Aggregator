@@ -1,0 +1,22 @@
+project:
+  name: FOIA_Aggregator
+  display_name: FOIA Aggregator
+  repository: neophilism/FOIA_Aggregator
+  status: active-development
+
+roadmap:
+  version: 1
+  planned_prs: 10
+  approved: true
+
+milestones:
+  - name: Backup recovery and archive consistency
+    prs: 2
+  - name: Durable autonomous ingestion
+    prs: 2
+  - name: Archive source and extraction coverage
+    prs: 2
+  - name: Engine Room visibility and alerts
+    prs: 2
+  - name: Public release and scale readiness
+    prs: 2
