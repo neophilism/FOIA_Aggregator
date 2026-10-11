@@ -1,3 +1,5 @@
+> **Canonical PR roadmap and Engine Room tracking:** [`registry/roadmap.json`](../registry/roadmap.json). This original detailed plan is preserved; new PR mappings and planned-work totals belong in the canonical file.
+
 # FOIA Aggregator — complete development, corpus-expansion, and independent-account handoff plan
 
 **Product:** neophilism/FOIA_Aggregator  
