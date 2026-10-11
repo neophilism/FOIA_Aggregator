@@ -10,19 +10,32 @@
       "id": "FA-001",
       "title": "Backup recovery and archive consistency — approved work package 1 of 2",
       "origin": "original",
-      "prs": []
+      "prs": [
+        46,
+        47
+      ],
+      "mappingEvidence": "Read-only B2 recovery audit merged; PR #47 remains open for checkpoint promotion, subject to live monotonicity acceptance."
     },
     {
       "id": "FA-002",
       "title": "Backup recovery and archive consistency — approved work package 2 of 2",
       "origin": "original",
-      "prs": []
+      "prs": [
+        40,
+        43,
+        44,
+        48
+      ],
+      "mappingEvidence": "B2 upload retries and recovery artifact safeguards merged; PR #48 open for native fallback; real restore/retention acceptance remains pending."
     },
     {
       "id": "FA-003",
       "title": "Durable autonomous ingestion — approved work package 1 of 2",
       "origin": "original",
-      "prs": []
+      "prs": [
+        41
+      ],
+      "mappingEvidence": "Single-writer scheduled crawling implementation PR #41 still open; real production sequential ingestion verification remains pending."
     },
     {
       "id": "FA-004",
