@@ -1,3 +1,5 @@
+> Current PR registry: `registry/prs.json` is the single source for Boardroom and Engine Room. Earlier references below to `registry/roadmap.json` are superseded. Preserve the approved scope and acceptance requirements. See `registry/PR_FORMAT.md`.
+
 > **Canonical PR roadmap and Engine Room tracking:** [`registry/roadmap.json`](../registry/roadmap.json). This original detailed plan is preserved; new PR mappings and planned-work totals belong in the canonical file.
 
 # FOIA Aggregator — complete development, corpus-expansion, and independent-account handoff plan
