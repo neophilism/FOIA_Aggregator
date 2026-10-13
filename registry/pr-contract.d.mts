@@ -1,0 +1,10 @@
+export type PrRecord = {id:number;number:number;title:string;url:string;state:"open"|"closed";draft:boolean;createdAt:string;updatedAt:string;closedAt:string|null;mergedAt:string|null;headSha?:string|null;baseRef?:string|null;mergeCommitSha?:string|null};
+export type ExternalDependency = {repository:string;unitId:string};
+export type PrUnit = {id:string;title:string;origin?:string;prs:number[];contributingPrs?:number[];priorEvidencePrs?:number[];dependsOn?:string[];externalDependencies?:ExternalDependency[];externalPrerequisites?:string[];acceptanceCriteria?:string;[key:string]:unknown};
+export type PrDocument = {schemaVersion:1;repository:string;roadmapVersion:number;planVerified:boolean;plannedPrCount:number;observedAt:string;units:PrUnit[];pullRequests:PrRecord[];[key:string]:unknown};
+export type PrItem = {ordinal:number;sourceItemId:string;title:string;scope:"original"|"addition";numbers:number[];contributions:number[];priorEvidence:number[];dependsOn:string[];externalDependencies:ExternalDependency[];externalPrerequisites:string[];reason:string|null;ambiguous?:boolean};
+export declare const STRUCTURED_PR_PATH:"registry/prs.json";
+export declare const PR_SNAPSHOT_DIRECTORY:"registry/pr-snapshots";
+export declare function parsePrRegistry(body:string,repositoryFullName:string):{document:PrDocument;items:PrItem[];pullRequests:PrRecord[]};
+export declare function titleWorkUnitIds(title:string):string[];
+export declare function attachObservedWorkIds<T extends {sourceItemId?:string;numbers:number[];contributions?:number[];priorEvidence?:number[];reason?:string|null;ambiguous?:boolean}>(items:T[],observedPullRequests:readonly {number:number;title:string;state?:string}[]):T[];

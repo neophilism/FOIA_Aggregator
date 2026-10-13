@@ -1,0 +1,17 @@
+name: PR registry contract
+on:
+  pull_request:
+  push:
+    branches: [main, master]
+permissions:
+  contents: read
+jobs:
+  pr-registry-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: node scripts/validate-pr-registry.mjs
+      - run: node --test registry/pr-contract.test.mjs

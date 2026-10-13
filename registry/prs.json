@@ -1,9 +1,14 @@
 {
-  "schemaVersion": 1,
   "repository": "neophilism/FOIA_Aggregator",
-  "roadmapVersion": 1,
+  "title": "FOIA_Aggregator",
   "planVerified": true,
   "plannedPrCount": 10,
+  "sourceFiles": [
+    ".exechub/project.yml",
+    "docs/DEVELOPMENT_PLAN.md"
+  ],
+  "schemaVersion": 1,
+  "roadmapVersion": 1,
   "observedAt": "2026-10-11T17:38:58.173Z",
   "units": [
     {
@@ -14,7 +19,12 @@
         46,
         47
       ],
-      "mappingEvidence": "Read-only B2 recovery audit merged; PR #47 remains open for checkpoint promotion, subject to live monotonicity acceptance."
+      "mappingEvidence": "Read-only B2 recovery audit merged; PR #47 remains open for checkpoint promotion, subject to live monotonicity acceptance.",
+      "sourceSection": ".exechub/project.yml",
+      "contributingPrs": [],
+      "dependsOn": [],
+      "externalDependencies": [],
+      "externalPrerequisites": []
     },
     {
       "id": "FA-002",
@@ -26,7 +36,12 @@
         44,
         48
       ],
-      "mappingEvidence": "B2 upload retries and recovery artifact safeguards merged; PR #48 open for native fallback; real restore/retention acceptance remains pending."
+      "mappingEvidence": "B2 upload retries and recovery artifact safeguards merged; PR #48 open for native fallback; real restore/retention acceptance remains pending.",
+      "sourceSection": ".exechub/project.yml",
+      "contributingPrs": [],
+      "dependsOn": [],
+      "externalDependencies": [],
+      "externalPrerequisites": []
     },
     {
       "id": "FA-003",
@@ -35,49 +50,89 @@
       "prs": [
         41
       ],
-      "mappingEvidence": "Single-writer scheduled crawling implementation PR #41 still open; real production sequential ingestion verification remains pending."
+      "mappingEvidence": "Single-writer scheduled crawling implementation PR #41 still open; real production sequential ingestion verification remains pending.",
+      "sourceSection": ".exechub/project.yml",
+      "contributingPrs": [],
+      "dependsOn": [],
+      "externalDependencies": [],
+      "externalPrerequisites": []
     },
     {
       "id": "FA-004",
       "title": "Durable autonomous ingestion — approved work package 2 of 2",
       "origin": "original",
-      "prs": []
+      "prs": [],
+      "sourceSection": ".exechub/project.yml",
+      "contributingPrs": [],
+      "dependsOn": [],
+      "externalDependencies": [],
+      "externalPrerequisites": []
     },
     {
       "id": "FA-005",
       "title": "Archive source and extraction coverage — approved work package 1 of 2",
       "origin": "original",
-      "prs": []
+      "prs": [],
+      "sourceSection": ".exechub/project.yml",
+      "contributingPrs": [],
+      "dependsOn": [],
+      "externalDependencies": [],
+      "externalPrerequisites": []
     },
     {
       "id": "FA-006",
       "title": "Archive source and extraction coverage — approved work package 2 of 2",
       "origin": "original",
-      "prs": []
+      "prs": [],
+      "sourceSection": ".exechub/project.yml",
+      "contributingPrs": [],
+      "dependsOn": [],
+      "externalDependencies": [],
+      "externalPrerequisites": []
     },
     {
       "id": "FA-007",
       "title": "Engine Room visibility and alerts — approved work package 1 of 2",
       "origin": "original",
-      "prs": []
+      "prs": [],
+      "sourceSection": ".exechub/project.yml",
+      "contributingPrs": [],
+      "dependsOn": [],
+      "externalDependencies": [],
+      "externalPrerequisites": []
     },
     {
       "id": "FA-008",
       "title": "Engine Room visibility and alerts — approved work package 2 of 2",
       "origin": "original",
-      "prs": []
+      "prs": [],
+      "sourceSection": ".exechub/project.yml",
+      "contributingPrs": [],
+      "dependsOn": [],
+      "externalDependencies": [],
+      "externalPrerequisites": []
     },
     {
       "id": "FA-009",
       "title": "Public release and scale readiness — approved work package 1 of 2",
       "origin": "original",
-      "prs": []
+      "prs": [],
+      "sourceSection": ".exechub/project.yml",
+      "contributingPrs": [],
+      "dependsOn": [],
+      "externalDependencies": [],
+      "externalPrerequisites": []
     },
     {
       "id": "FA-010",
       "title": "Public release and scale readiness — approved work package 2 of 2",
       "origin": "original",
-      "prs": []
+      "prs": [],
+      "sourceSection": ".exechub/project.yml",
+      "contributingPrs": [],
+      "dependsOn": [],
+      "externalDependencies": [],
+      "externalPrerequisites": []
     }
   ],
   "pullRequests": [

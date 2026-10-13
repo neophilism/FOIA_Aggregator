@@ -26,3 +26,7 @@ Read in this order: [docs/DEVELOPMENT_PLAN.md](docs/DEVELOPMENT_PLAN.md), [docs/
 8. **Dependencies:** do not substantially advance FOIA_Bias_Analysis or Send_FOIA_Log_Requests until FC-14's broad-corpus review is meaningful. Do not start external spend or bulk request dispatch implicitly.
 
 Never count a roadmap item complete just because documentation exists, a GitHub PR is merged, or Render /healthz answers. Handoff must distinguish code complete, integrated, data synchronized, deployed and real coverage validated.
+
+## Shared PR registry
+
+Use `registry/prs.json` as the sole active PR plan for Boardroom and Engine Room. Follow `registry/PR_FORMAT.md` and run `node scripts/validate-pr-registry.mjs`. Preserve stable IDs, scope, counts, dependencies, acceptance and contribution-only evidence. `registry/roadmap.json` is retired; never recreate a duplicate milestone plan. This contract supersedes older file-path guidance.
