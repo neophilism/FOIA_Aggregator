@@ -1,0 +1,36 @@
+version: 2.1
+
+# CI parity for extraction, legacy Office conversion, OCR, compose, image build.
+# Corpus ingestion and live B2/database audits are operations requiring credentials.
+jobs:
+  python-real-toolchain:
+    docker:
+      - image: cimg/python:3.12
+    resource_class: large
+    steps:
+      - checkout
+      - run:
+          name: Install real OCR and Office conversion binaries
+          command: sudo apt-get update && sudo apt-get install -y antiword catdoc tesseract-ocr
+      - run: python -m pip install --upgrade pip
+      - run: pip install -r requirements.txt
+      - run:
+          name: Confirm real toolchain available
+          command: |
+            python -c "import pytesseract; print(pytesseract.get_tesseract_version())"
+            command -v antiword
+            command -v xls2csv
+            command -v catppt
+      - run: python -m unittest discover -s tests -v
+      - run: python -m compileall -q foia_archive tests
+      - setup_remote_docker
+      - run:
+          name: Validate Docker Compose and production image
+          command: |
+            cp .env.example .env
+            docker compose config
+            docker build -t foia-aggregator:test .
+workflows:
+  code-and-image:
+    jobs:
+      - python-real-toolchain
