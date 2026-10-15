@@ -134,3 +134,14 @@ multipart upload where feasible. If the object state cannot be reconciled,
 the run fails closed; the local SQLite database must be retained and reviewed
 before the next ingestion run. A successful upload is still verified on restore
 against its embedded checksum and SQLite integrity. Do not disable TLS checks.
+
+## B2 Native API recovery path
+
+If three S3 checkpoint-upload attempts fail with a TLS/SSL transport error,
+the backup writer attempts the documented B2 Native API using the same
+bucket-scoped application key. It requests a separate B2 upload URL, streams
+the compressed checkpoint with Content-Length and a SHA-1 checksum, checks
+the upload receipt, and retries failed requests against new upload URLs only
+after Class C exact-key reconciliation. TLS certificate validation remains
+mandatory, and the older verified checkpoint is never overwritten. This
+fallback is not used for S3 authorization failures or missing credentials.
