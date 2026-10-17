@@ -33,7 +33,7 @@ on:
         default: "12"
 
 concurrency:
-  group: corpus-expansion
+  group: foia-b2-single-writer
   cancel-in-progress: false
 
 jobs:
