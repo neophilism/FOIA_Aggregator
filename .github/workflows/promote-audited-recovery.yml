@@ -1,0 +1,46 @@
+name: Promote audited FOIA recovery checkpoint
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/promote-audited-recovery.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: read
+
+concurrency:
+  group: foia-b2-single-writer
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 70
+    env:
+      PYTHONPATH: .
+      GH_TOKEN: ${{ github.token }}
+      B2_KEY_ID: ${{ secrets.B2_KEY_ID }}
+      B2_APPLICATION_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+      FOIA_STORAGE_BACKEND: b2
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - name: Install Python requirements
+        run: pip install -r requirements.txt
+      - name: Download proven recovery candidate
+        shell: bash
+        run: |
+          test -n "$B2_KEY_ID"
+          test -n "$B2_APPLICATION_KEY"
+          mkdir -p recovery
+          gh run download 38010903638 --repo neophilism/FOIA_Aggregator \
+            --name foia-recovery-preserved-38010903638 --dir recovery
+          test -s recovery/foia_archive.db
+      - name: Re-audit and publish a verified new B2 checkpoint
+        run: python scripts/promote_audited_recovery.py
