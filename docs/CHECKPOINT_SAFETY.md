@@ -13,6 +13,9 @@ guards. The ten approved FA units and their scope are unchanged.
 3. Choose a fresh UUID-bearing object key, even for identical same-second runs.
 4. Upload through the existing bounded S3 path; reconcile the exact key before
    retrying ambiguous transport results. Authorization failures stop immediately.
+   A separate checkpoint client permits only one SDK attempt; ordinary document
+   and read-client behavior is unchanged. Checkpoints use a single upload request
+   rather than hidden multipart retries, with an explicit 5 GiB request ceiling.
 5. Only after three actual S3 TLS failures, use the native fallback. API origins
    must match the documented B2 cluster pattern; upload URLs must use a B2-owned
    host and the native upload path. TLS verification stays enabled and HTTP
@@ -65,3 +68,4 @@ Provider references checked October 17, 2026:
 - https://www.backblaze.com/apidocs/b2-upload-file
 - https://www.backblaze.com/apidocs/introduction-to-the-b2-native-api
 - https://docs.aws.amazon.com/boto3/latest/reference/services/s3/client/get_object.html
+- https://botocore.amazonaws.com/v1/documentation/api/latest/reference/config.html

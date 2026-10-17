@@ -154,7 +154,8 @@ def _native_url(value: str, *, api: bool = False) -> str:
         if api:
             valid = re.fullmatch(r"api\d{3}\.backblazeb2\.com", host) and url.path in ("", "/") and not url.query
         else:
-            valid = (host.endswith(".backblaze.com") or host.endswith(".backblazeb2.com")) and url.path.startswith("/b2api/v4/b2_upload_file")
+            path = "/b2api/v4/b2_upload_file"
+            valid = re.fullmatch(r"pod[-a-z0-9]*\.(?:backblaze\.com|backblazeb2\.com)", host) and (url.path == path or url.path.startswith(path + "/"))
         if not valid:
             raise ValueError()
     except (ValueError, TypeError):
@@ -310,8 +311,10 @@ def _upload_backup(
     create a second billable object version in a versioned bucket.
     """
     expected_size = compressed_path.stat().st_size
+    if expected_size > 5 * 1024 * 1024 * 1024:
+        raise ArchiveStorageError("Checkpoint exceeds the single-request upload ceiling")
     transfer = TransferConfig(
-        multipart_threshold=256 * 1024 * 1024,
+        multipart_threshold=5 * 1024 * 1024 * 1024 + 1,
         multipart_chunksize=32 * 1024 * 1024,
         max_concurrency=2,
         use_threads=False,
@@ -319,7 +322,7 @@ def _upload_backup(
     tls_failures = 0
     for attempt in range(1, 4):
         try:
-            backend.client.upload_file(
+            backend.checkpoint_client.upload_file(
                 str(compressed_path),
                 backend.bucket,
                 key,

@@ -163,6 +163,28 @@ class CheckpointSafetyTests(unittest.TestCase):
                 _permanently_delete_object(self.backend, "fixture")
         delete.assert_not_called()
 
+    def test_partial_object_manifest_is_not_absence_evidence(self):
+        with patch.object(self.client, "list_objects_v2", return_value={"IsTruncated": True}), self.assertRaises(ArchiveStorageError):
+            self.backend.current_object_manifest(prefix="fixture")
+
+    def test_partial_version_usage_cannot_report_false_headroom(self):
+        with patch.object(self.client, "list_object_versions", return_value={"IsTruncated": True}), self.assertRaises(ArchiveStorageError):
+            self.backend.usage_summary()
+
+    def test_checkpoint_client_disables_sdk_retries_without_changing_document_client(self):
+        from foia_archive.archive_storage import B2ArchiveStorage
+        with patch("foia_archive.archive_storage.boto3.client", side_effect=[object(), object()]) as factory:
+            backend = B2ArchiveStorage(bucket="fixture", region="us-east-005", endpoint_url="https://s3.us-east-005.backblazeb2.com", key_id="fixture-key", application_key="fixture-value")
+        self.assertIsNot(backend.client, backend.checkpoint_client)
+        self.assertNotIn("config", factory.call_args_list[0].kwargs)
+        self.assertEqual(factory.call_args_list[1].kwargs["config"].retries["total_max_attempts"], 1)
+
+    def test_checkpoint_never_enters_multipart_upload(self):
+        original = self.client.upload_file
+        with patch.object(self.client, "upload_file", wraps=original) as upload:
+            self.backup()
+        self.assertGreater(upload.call_args.kwargs["Config"].multipart_threshold, 5 * 1024 * 1024 * 1024)
+
     def test_s3_auth_failure_never_retries_or_falls_back(self):
         error = ClientError({"Error": {"Code": "AccessDenied", "Message": "fixture-secret"}, "ResponseMetadata": {"HTTPStatusCode": 403}}, "PutObject")
         with patch.object(self.client, "upload_file", side_effect=error) as upload, patch("foia_archive.database_backup._native_upload_backup") as native:
