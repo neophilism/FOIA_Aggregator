@@ -185,6 +185,7 @@ class CheckpointSafetyTests(unittest.TestCase):
         from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
         from threading import Thread
         from foia_archive.archive_storage import B2ArchiveStorage
+        from boto3.exceptions import S3UploadFailedError
         calls = []
         class Handler(BaseHTTPRequestHandler):
             def do_PUT(self):
@@ -204,7 +205,7 @@ class CheckpointSafetyTests(unittest.TestCase):
         try:
             with patch.dict(os.environ, {}, clear=True):
                 backend = B2ArchiveStorage(bucket="fixture", region="us-east-005", endpoint_url=f"http://127.0.0.1:{server.server_port}", key_id="fixture-key", application_key="fixture-value")
-                with self.assertRaises(ClientError):
+                with self.assertRaises(S3UploadFailedError):
                     backend.checkpoint_client.upload_file(str(self.fixture.db_path), "fixture", "fixture.sqlite")
             self.assertEqual(calls, ["PUT"])
         finally:
@@ -225,6 +226,17 @@ class CheckpointSafetyTests(unittest.TestCase):
                 self.backup()
         self.assertNotIn("fixture-secret", str(raised.exception))
         self.assertIsNone(raised.exception.__cause__)
+        self.assertEqual(upload.call_count, 1)
+        native.assert_not_called()
+
+    def test_wrapped_s3_auth_failure_is_still_terminal(self):
+        from boto3.exceptions import S3UploadFailedError
+        error = ClientError({"Error": {"Code": "AccessDenied"}, "ResponseMetadata": {"HTTPStatusCode": 403}}, "PutObject")
+        wrapped = S3UploadFailedError("fixture provider wrapper")
+        wrapped.__context__ = error
+        with patch.object(self.client, "upload_file", side_effect=wrapped) as upload, patch("foia_archive.database_backup._native_upload_backup") as native:
+            with self.assertRaisesRegex(ArchiveStorageError, "authorization rejected"):
+                self.backup()
         self.assertEqual(upload.call_count, 1)
         native.assert_not_called()
 

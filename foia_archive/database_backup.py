@@ -298,6 +298,22 @@ def _native_upload_backup(
             time.sleep(min(2 ** attempt, 8))
 
 
+def _s3_authorization_rejected(error: Exception) -> bool:
+    # upload_file wraps a ClientError in S3UploadFailedError. Inspect typed
+    # exception lineage, never provider text or guessed error strings.
+    seen = set()
+    while error is not None and id(error) not in seen:
+        seen.add(id(error))
+        if isinstance(error, ClientError):
+            response = error.response
+            status = str(response.get("ResponseMetadata", {}).get("HTTPStatusCode"))
+            code = response.get("Error", {}).get("Code")
+            if status in ("401", "403") or code in ("AccessDenied", "InvalidAccessKeyId", "SignatureDoesNotMatch", "ExpiredToken", "InvalidToken"):
+                return True
+        error = error.__cause__ or error.__context__
+    return False
+
+
 def _upload_backup(
     backend: B2ArchiveStorage,
     compressed_path: Path,
@@ -337,7 +353,7 @@ def _upload_backup(
             )
             return
         except Exception as exc:
-            if isinstance(exc, ClientError) and str(exc.response.get("ResponseMetadata", {}).get("HTTPStatusCode")) in ("401", "403"):
+            if _s3_authorization_rejected(exc):
                 raise ArchiveStorageError("B2 checkpoint authorization rejected; no retry or fallback") from None
             tls_failures += int(isinstance(exc, BotocoreSSLError))
             # A failed client call does not necessarily mean the object was
