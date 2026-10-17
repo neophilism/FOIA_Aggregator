@@ -87,6 +87,11 @@ class FakeBackupS3Client:
     def download_file(self, Bucket, Key, Filename):
         Path(Filename).write_bytes(self.objects[(Bucket, Key)]["body"])
 
+    def get_object(self, Bucket, Key):
+        item = self.objects[(Bucket, Key)]
+        return {"Body": io.BytesIO(item["body"]), "ContentLength": len(item["body"]),
+                "Metadata": item["metadata"]}
+
 
 class DatabaseBackupTests(unittest.TestCase):
     def setUp(self):
@@ -220,6 +225,99 @@ class DatabaseBackupTests(unittest.TestCase):
                 backup_database_to_b2(self.config, force=True, now=now)
         self.assertEqual(upload.call_count, 1)
         self.assertTrue(self.db_path.is_file())
+
+    def test_native_fallback_after_repeated_s3_tls_failures(self):
+        import os
+        from botocore.exceptions import SSLError
+
+        tls_error = SSLError(
+            endpoint_url="https://s3.example.invalid", error=OSError("TLS EOF")
+        )
+        with self._patch_backend(), patch.object(
+            self.client, "upload_file", side_effect=tls_error
+        ) as upload, patch(
+            "foia_archive.database_backup._native_upload_backup",
+            side_effect=lambda backend, path, key, sha: FakeBackupS3Client.upload_file(
+                self.client, str(path), backend.bucket, key,
+                ExtraArgs={"Metadata": {"sqlite-sha256": sha}},
+            ),
+        ) as native, patch(
+            "foia_archive.database_backup.time.sleep"
+        ), patch.dict(
+            os.environ, {"B2_KEY_ID": "key", "B2_APPLICATION_KEY": "value"}
+        ):
+            backup_database_to_b2(self.config, force=True)
+
+        self.assertEqual(upload.call_count, 3)
+        native.assert_called_once()
+
+    def test_native_api_receipt_validates_upload_bytes_and_metadata(self):
+        import hashlib
+        import os
+        from foia_archive.database_backup import _native_upload_backup
+
+        packed = self.root / "sample.sqlite.gz"
+        packed.write_bytes(b"sample compressed checkpoint")
+        key = "database-backups/sample.sqlite.gz"
+        sqlite_hash = "a" * 64
+        expected_sha1 = hashlib.sha1(packed.read_bytes()).hexdigest()
+
+        class Reply:
+            status_code = 200
+
+            def __init__(self, payload):
+                self.payload = payload
+
+            def raise_for_status(self):
+                return None
+
+            def json(self):
+                return self.payload
+
+        account = Reply({
+            "authorizationToken": "account-token",
+            "apiInfo": {"storageApi": {
+                "apiUrl": "https://api005.backblazeb2.com",
+                "allowed": {
+                    "buckets": [{"id": "bucket-id", "name": "foia-test"}],
+                    "capabilities": ["writeFiles"],
+                },
+            }},
+        })
+        destination = Reply({
+            "uploadUrl": "https://pod005.backblazeb2.com/b2api/v4/b2_upload_file/bucket-id",
+            "bucketId": "bucket-id",
+            "authorizationToken": "upload-token",
+        })
+
+        def upload(url, headers, data, timeout, allow_redirects, verify):
+            self.assertFalse(allow_redirects)
+            self.assertTrue(verify)
+            self.assertEqual(url, "https://pod005.backblazeb2.com/b2api/v4/b2_upload_file/bucket-id")
+            self.assertEqual(headers["X-Bz-File-Name"], "database-backups%2Fsample.sqlite.gz")
+            self.assertEqual(headers["Content-Length"], str(packed.stat().st_size))
+            self.assertEqual(headers["X-Bz-Content-Sha1"], expected_sha1)
+            self.assertEqual(headers["X-Bz-Info-sqlite-sha256"], sqlite_hash)
+            self.assertEqual(data.read(), packed.read_bytes())
+            return Reply({
+                "fileName": key,
+                "bucketId": "bucket-id",
+                "contentLength": packed.stat().st_size,
+                "contentSha1": expected_sha1,
+            })
+
+        with patch.dict(
+            os.environ, {"B2_KEY_ID": "key", "B2_APPLICATION_KEY": "value"}
+        ), patch(
+            "foia_archive.database_backup.requests.get",
+            side_effect=[account, destination],
+        ) as get, patch(
+            "foia_archive.database_backup.requests.post", side_effect=upload,
+        ) as post:
+            _native_upload_backup(self.backend, packed, key, sqlite_hash)
+
+        self.assertEqual(get.call_count, 2)
+        post.assert_called_once()
 
     def test_backup_due_uses_latest_remote_backup_timestamp(self):
         latest = datetime(2026, 10, 5, 12, 0, tzinfo=timezone.utc)
@@ -428,3 +526,4 @@ class DatabaseBackupTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

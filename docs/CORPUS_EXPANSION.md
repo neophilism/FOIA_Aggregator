@@ -126,6 +126,10 @@ The administrator dashboard should expose the current cap, actual billable B2 us
 
 ## Checkpoint upload recovery
 
+See [FA-002 checkpoint safety](CHECKPOINT_SAFETY.md) for read-back-before-pruning,
+bounded restores, fresh object keys and the reviewed native fallback. This is
+source implementation, not evidence of live recovery or synchronized production.
+
 A TLS EOF during an S3 multipart upload does not establish that an upload
 was rejected. Database checkpoints now use a bounded retry policy, with a
 Class C exact-key listing before any retry to avoid creating duplicate B2
@@ -134,3 +138,4 @@ multipart upload where feasible. If the object state cannot be reconciled,
 the run fails closed; the local SQLite database must be retained and reviewed
 before the next ingestion run. A successful upload is still verified on restore
 against its embedded checksum and SQLite integrity. Do not disable TLS checks.
+
