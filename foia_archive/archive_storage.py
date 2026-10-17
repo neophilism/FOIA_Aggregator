@@ -10,6 +10,7 @@ from typing import Optional
 
 import boto3
 import requests
+from botocore.config import Config as BotocoreConfig
 
 from .utils import Config
 
@@ -151,6 +152,14 @@ class B2ArchiveStorage(ArchiveStorage):
             aws_access_key_id=key_id,
             aws_secret_access_key=application_key,
         )
+        # Checkpoint writes must return control after one SDK attempt so an
+        # ambiguous response is reconciled before the application retries it.
+        # Keep ordinary document/read behavior on the existing client.
+        self.checkpoint_client = client or boto3.client(
+            "s3", endpoint_url=endpoint_url, region_name=region,
+            aws_access_key_id=key_id, aws_secret_access_key=application_key,
+            config=BotocoreConfig(retries={"mode": "standard", "total_max_attempts": 1}),
+        )
 
     @staticmethod
     def key_for(sha256: str, filename: str) -> str:
@@ -170,6 +179,7 @@ class B2ArchiveStorage(ArchiveStorage):
         """
         objects: dict[str, int] = {}
         token = None
+        seen = set()
         while True:
             kwargs = {"Bucket": self.bucket}
             if prefix:
@@ -191,8 +201,9 @@ class B2ArchiveStorage(ArchiveStorage):
             if not response.get("IsTruncated"):
                 break
             token = response.get("NextContinuationToken")
-            if not token:
-                break
+            if not token or token in seen:
+                raise ArchiveStorageError("Incomplete or cyclic B2 object manifest")
+            seen.add(token)
         return objects
 
     def exists(self, key: str) -> bool:
@@ -268,6 +279,7 @@ class B2ArchiveStorage(ArchiveStorage):
         other_bytes = 0
         key_marker = None
         version_id_marker = None
+        seen = set()
 
         while True:
             kwargs = {"Bucket": self.bucket}
@@ -301,8 +313,10 @@ class B2ArchiveStorage(ArchiveStorage):
                 break
             key_marker = response.get("NextKeyMarker")
             version_id_marker = response.get("NextVersionIdMarker")
-            if not key_marker and not version_id_marker:
-                break
+            marker = (key_marker, version_id_marker)
+            if not any(marker) or marker in seen:
+                raise ArchiveStorageError("Incomplete or cyclic B2 usage inventory")
+            seen.add(marker)
 
         return B2Usage(
             stored_bytes=stored_bytes,
@@ -509,3 +523,4 @@ def get_archive_storage(
         application_key=application_key,
         max_archive_bytes=max_archive_bytes,
     )
+
