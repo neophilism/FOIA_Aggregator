@@ -179,6 +179,39 @@ class CheckpointSafetyTests(unittest.TestCase):
         self.assertNotIn("config", factory.call_args_list[0].kwargs)
         self.assertEqual(factory.call_args_list[1].kwargs["config"].retries["total_max_attempts"], 1)
 
+    def test_real_sdk_makes_one_http_attempt_before_returning_control(self):
+        # Loopback-only server, explicit fake keys and a clean environment. This
+        # exercises the SDK retry machinery rather than mocking upload_file.
+        from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+        from threading import Thread
+        from foia_archive.archive_storage import B2ArchiveStorage
+        calls = []
+        class Handler(BaseHTTPRequestHandler):
+            def do_PUT(self):
+                calls.append("PUT")
+                self.rfile.read(int(self.headers.get("Content-Length", "0")))
+                payload = b"<Error><Code>InternalError</Code><Message>fixture failure</Message></Error>"
+                self.send_response(500)
+                self.send_header("Content-Type", "application/xml")
+                self.send_header("Content-Length", str(len(payload)))
+                self.end_headers()
+                self.wfile.write(payload)
+            def log_message(self, *_args):
+                pass
+        server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        thread = Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            with patch.dict(os.environ, {}, clear=True):
+                backend = B2ArchiveStorage(bucket="fixture", region="us-east-005", endpoint_url=f"http://127.0.0.1:{server.server_port}", key_id="fixture-key", application_key="fixture-value")
+                with self.assertRaises(ClientError):
+                    backend.checkpoint_client.upload_file(str(self.fixture.db_path), "fixture", "fixture.sqlite")
+            self.assertEqual(calls, ["PUT"])
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join(timeout=3)
+
     def test_checkpoint_never_enters_multipart_upload(self):
         original = self.client.upload_file
         with patch.object(self.client, "upload_file", wraps=original) as upload:
