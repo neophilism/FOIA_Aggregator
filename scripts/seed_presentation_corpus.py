@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import sqlite3
 import re
 from pathlib import Path
 from typing import Optional
@@ -26,6 +27,7 @@ from foia_archive.database_backup import (
     restore_database_from_b2,
 )
 from foia_archive.engine import run_once
+from foia_archive.ingestion_journal import exclusive_writer
 from foia_archive.storage import get_archive_stats, get_connection, init_db
 from foia_archive.utils import load_config
 
@@ -137,6 +139,20 @@ def _set_b2_environment(bucket: str, region: str, endpoint: str) -> None:
 
 def _restore_latest_if_available(config_path: str) -> bool:
     config = load_config(config_path)
+    destination = Path(config.storage.get("db_path", "data/foia_archive.db"))
+    if destination.exists() and destination.stat().st_size > 0:
+        # Restart on a durable host must preserve committed progress, even when
+        # the last cloud checkpoint predates it. Corruption requires recovery,
+        # never an automatic destructive fallback to a possibly stale snapshot.
+        conn = sqlite3.connect(destination.resolve().as_uri() + "?mode=ro", uri=True)
+        try:
+            result = conn.execute("PRAGMA quick_check").fetchone()
+            if not result or result[0] != "ok":
+                raise RuntimeError("Existing ingestion database failed integrity validation")
+        finally:
+            conn.close()
+        print("Retaining existing verified local ingestion database; no restore performed.")
+        return True
     backups = list_database_backups(config)
     if not backups:
         print("No prior SQLite backup found; starting a fresh presentation database.")
@@ -150,11 +166,6 @@ def _restore_latest_if_available(config_path: str) -> bool:
     destination = Path(
         config.storage.get("db_path", "data/foia_archive.db")
     )
-    if destination.exists():
-        # The workflow normally begins with an empty workspace data directory,
-        # but avoid replacing an existing DB unless it came from this restore.
-        destination.unlink()
-
     restore_database_from_b2(
         config,
         key=key,
@@ -199,50 +210,51 @@ def main() -> None:
     print(f"Resolved B2 region {region}; bucket restriction verified.")
 
     config = load_config(config_path)
-    Path(config.storage.get("files_dir", "data/files")).mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    restored = _restore_latest_if_available(config_path)
-    if not restored:
-        init_db(
-            config.storage.get("db_path", "data/foia_archive.db"),
-            config.storage.get("files_dir", "data/files"),
+    with exclusive_writer(config.storage.get("db_path", "data/foia_archive.db")):
+        Path(config.storage.get("files_dir", "data/files")).mkdir(
+            parents=True,
+            exist_ok=True,
         )
 
-    max_docs = config.crawler.get("max_docs_per_source", 1)
-    print(
-        "Starting bounded live crawl "
-        f"(max_docs_per_source={max_docs}, "
-        f"source_limit={config.crawler.get('source_limit') or 'all'}, "
-        f"max_pages={config.crawler.get('max_pages_per_source')}, "
-        f"max_depth={config.crawler.get('max_depth')})"
-    )
+        restored = _restore_latest_if_available(config_path)
+        if not restored:
+            init_db(
+                config.storage.get("db_path", "data/foia_archive.db"),
+                config.storage.get("files_dir", "data/files"),
+            )
 
-    run_once(
-        config_path=config_path,
-        dry_run=False,
-        max_docs_per_source=int(max_docs),
-        refresh_metadata_enabled=True,
-    )
+        max_docs = config.crawler.get("max_docs_per_source", 1)
+        print(
+            "Starting bounded live crawl "
+            f"(max_docs_per_source={max_docs}, "
+            f"source_limit={config.crawler.get('source_limit') or 'all'}, "
+            f"max_pages={config.crawler.get('max_pages_per_source')}, "
+            f"max_depth={config.crawler.get('max_depth')})"
+        )
 
-    config = load_config(config_path)
-    backup = backup_database_to_b2(config, force=True)
-    if backup is None:
-        raise RuntimeError("Forced SQLite backup was unexpectedly not created")
+        run_once(
+            config_path=config_path,
+            dry_run=False,
+            max_docs_per_source=int(max_docs),
+            refresh_metadata_enabled=True,
+        )
 
-    conn = get_connection(config.storage.get("db_path"))
-    try:
-        stats = get_archive_stats(conn)
-    finally:
-        conn.close()
+        config = load_config(config_path)
+        backup = backup_database_to_b2(config, force=True)
+        if backup is None:
+            raise RuntimeError("Forced SQLite backup was unexpectedly not created")
 
-    _write_summary(stats)
-    print(
-        "PASS: bounded corpus crawl completed and verified SQLite snapshot "
-        f"uploaded as {backup.key}"
-    )
+        conn = get_connection(config.storage.get("db_path"))
+        try:
+            stats = get_archive_stats(conn)
+        finally:
+            conn.close()
+
+        _write_summary(stats)
+        print(
+            "PASS: bounded corpus crawl completed and verified SQLite snapshot "
+            f"uploaded as {backup.key}"
+        )
 
 
 if __name__ == "__main__":

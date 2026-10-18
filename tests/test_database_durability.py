@@ -54,8 +54,8 @@ class DatabaseDurabilityTests(unittest.TestCase):
         finally:
             conn.close()
 
-        self.assertEqual([row["version"] for row in rows], [1, 2, 3, 4, 5, 6])
-        self.assertEqual(version, 6)
+        self.assertEqual([row["version"] for row in rows], [1, 2, 3, 4, 5, 6, 7])
+        self.assertEqual(version, 7)
 
     def test_version_5_full_text_rows_gain_native_extraction_method(self):
         conn = sqlite3.connect(self.db_path)
@@ -142,7 +142,7 @@ class DatabaseDurabilityTests(unittest.TestCase):
             conn.close()
 
         self.assertEqual(row["extraction_method"], "native_text")
-        self.assertEqual(version, 6)
+        self.assertEqual(version, 7)
 
     def test_expected_query_indexes_are_created(self):
         init_db(self.db_path, self.files_dir)
@@ -264,7 +264,7 @@ class DatabaseDurabilityTests(unittest.TestCase):
             conn.close()
 
         self.assertEqual(count, 0)
-        self.assertEqual(version, 6)
+        self.assertEqual(version, 7)
 
 
 class DocumentSourceRelationshipTests(unittest.TestCase):

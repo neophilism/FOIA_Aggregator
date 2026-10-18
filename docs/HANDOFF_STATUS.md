@@ -40,3 +40,7 @@ B2 commands require correctly configured server-side environment/secrets and mus
 
 ## Release/handoff exit criteria
 Every plan unit has explicit actual PR mapping and test evidence; one authoritative writer; two observed successful serialized scheduled runs; non-regressing B2 DB checkpoints and full object manifest; diverse primary/third-party FOIA source census and historical backfill status; date/format/body/OCR search and signed downloads on the deployed site; honest current storage/coverage dashboard; cost and API restrictions documented. Until then, do not certify broad nationwide FOIA archive coverage or unblock major dependent FOIA Bias Analysis / Send FOIA Log Requests buildout.
+
+## FA-004 implementation update — 2026-10-18
+
+PR #53 now implements schema-7 run/source receipts, interrupted-wave source resume, same-host writer exclusion, fair bounded source rotation and safe seed/expansion restart preservation. See [ingestion recovery](INGESTION_RECOVERY.md). This is software progress, not production/B2 acceptance; page cursors and live verification remain pending.

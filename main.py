@@ -39,6 +39,15 @@ def run(
     )
 
 
+@app.command("ingestion-status")
+def ingestion_status(config: str = "config/settings.yaml"):
+    """Print the last local run receipt; this does not contact or mutate B2."""
+    import json
+    from foia_archive.ingestion_journal import latest_receipt
+    cfg = load_config(config)
+    typer.echo(json.dumps(latest_receipt(cfg.storage.get("db_path")), sort_keys=True))
+
+
 @app.command("backup-db")
 def backup_db(
     config: str = "config/settings.yaml",

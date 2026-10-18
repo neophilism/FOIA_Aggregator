@@ -7,6 +7,7 @@ from typing import Optional
 
 from .database_backup import backup_database_to_b2
 from .discovery import refresh_metadata
+from .ingestion_journal import RunJournal, exclusive_writer, policy_fingerprint
 from .scraper_core import (
     HostRateLimiter,
     crawl_reading_room,
@@ -68,7 +69,13 @@ def run_once(
         },
     )
 
-    init_db(cfg.storage.get("db_path"), cfg.storage.get("files_dir"))
+    # Lock the resolved database path before schema writes or external work.
+    with exclusive_writer(cfg.storage.get("db_path"), allow_nested=True):
+        init_db(cfg.storage.get("db_path"), cfg.storage.get("files_dir"))
+        return _run_cycle(cfg, refresh_metadata_enabled, backup_enabled)
+
+
+def _run_cycle(cfg, refresh_metadata_enabled, backup_enabled):
 
     metadata_ok = True
     if refresh_metadata_enabled:
@@ -112,41 +119,57 @@ def run_once(
     rate_limiter = HostRateLimiter(
         float(cfg.crawler.get("per_host_delay_seconds", 0))
     )
-    for rr in rooms:
-        try:
-            crawl_reading_room(
-                rr["id"],
-                cfg,
-                dry_run=dry_run_flag,
-                max_docs=max_docs,
-                rate_limiter=rate_limiter,
-            )
-        except sqlite3.Error as exc:
-            logger.exception(
-                "Database failure while crawling reading room %s; aborting "
-                "this cycle for controlled daemon retry: %s",
-                rr["id"],
-                exc,
-            )
-            raise
-        except Exception as exc:
-            logger.exception(
-                "Unexpected crawl failure for reading room %s; continuing "
-                "with remaining sources: %s",
-                rr["id"],
-                exc,
-            )
-            _record_unexpected_source_failure(cfg, rr["id"], exc)
+    journal = RunJournal(cfg.storage.get("db_path"), policy_fingerprint(cfg), [rr["id"] for rr in rooms])
+    completed = journal.completed_sources()
+    source_failures = False
+    cap_reached = False
+    # Resume the original bounded plan, rather than silently shifting its denominator.
+    room_by_id = {rr["id"]: rr for rr in rooms}
+    try:
+        for source_id in journal.source_ids:
+            if source_id in completed:
+                continue
+            journal.source_started(source_id)
+            if source_id not in room_by_id:
+                journal.source_finished(source_id, "SOURCE_NOT_ELIGIBLE")
+                source_failures = True
+                continue
+            try:
+                crawl_reading_room(
+                    source_id, cfg, dry_run=dry_run_flag,
+                    max_docs=max_docs, rate_limiter=rate_limiter,
+                )
+                failed = journal.source_failed(source_id)
+                journal.source_finished(source_id, "SOURCE_CRAWL_FAILED" if failed else None)
+                source_failures = source_failures or failed
+                if cfg.data.get("_storage_quota_reached"):
+                    cap_reached = True
+                    break
+            except sqlite3.Error:
+                raise
+            except Exception as exc:
+                _record_unexpected_source_failure(cfg, source_id, exc)
+                journal.source_finished(source_id, type(exc).__name__)
+                source_failures = True
+        journal.checkpoint("PENDING" if backup_enabled else "EXTERNAL_CHECKPOINT_REQUIRED")
+        journal.finish(metadata_ok=metadata_ok,
+                       state="DEGRADED" if source_failures or not metadata_ok else "COMPLETED",
+                       reason="storage_cap_reached" if cap_reached else "source_or_metadata_failure" if source_failures or not metadata_ok else "bounded_wave_finished")
+    except BaseException as exc:
+        journal.finish(metadata_ok=metadata_ok,
+                       state="FAILED" if isinstance(exc, Exception) else "INTERRUPTED",
+                       reason=type(exc).__name__)
+        raise
 
     try:
         if backup_enabled:
-            backup_database_to_b2(cfg)
+            checkpoint = backup_database_to_b2(cfg)
+            journal.checkpoint("VERIFIED" if checkpoint is not None else "DEFERRED", checkpoint.key if checkpoint is not None else None)
     except Exception as exc:
-        logger.warning(
-            "SQLite backup failed; crawl cycle remains successful and the "
-            "next eligible cycle will retry: %s: %s",
-            type(exc).__name__,
-            exc,
-        )
+        journal.checkpoint("FAILED")
+        journal.finish(metadata_ok=metadata_ok, state="DEGRADED", reason="checkpoint_failure")
+        logger.warning("SQLite checkpoint failed for run %s; next cycle must retry (%s)", journal.id, type(exc).__name__)
 
+    logger.info("Ingestion run %s finished; durable receipt retained", journal.id)
     return metadata_ok
+
