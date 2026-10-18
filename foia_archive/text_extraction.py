@@ -70,6 +70,8 @@ class OCRSettings:
                 parsed = float(data.get(name, default))
             except (TypeError, ValueError):
                 parsed = default
+            if not math.isfinite(parsed):
+                parsed = default
             return max(minimum, min(maximum, parsed))
 
         languages = str(data.get("languages") or "eng").strip() or "eng"

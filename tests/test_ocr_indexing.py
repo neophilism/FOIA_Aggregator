@@ -45,6 +45,14 @@ class OCRSettingsTests(unittest.TestCase):
         self.assertEqual(settings.max_image_megapixels, 100.0)
 
 
+    def test_nonfinite_ocr_limits_use_safe_defaults(self):
+        for value in ("nan", "inf", "-inf"):
+            with self.subTest(value=value):
+                settings = OCRSettings.from_mapping({"page_timeout_seconds": value, "max_image_megapixels": value})
+                self.assertEqual(settings.page_timeout_seconds, 45.0)
+                self.assertEqual(settings.max_image_megapixels, 20.0)
+
+
 class OCRExtractionTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
