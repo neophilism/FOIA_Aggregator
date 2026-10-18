@@ -19,6 +19,18 @@ from foia_archive.utils import Config
 
 class EngineResilienceTests(unittest.TestCase):
     def setUp(self):
+        journal_patch = patch("foia_archive.engine.RunJournal")
+        journal_class = journal_patch.start()
+        self.journal = journal_class.return_value
+        def journal_for_plan(db_path, fingerprint, ids):
+            self.journal.source_ids = ids
+            return self.journal
+        journal_class.side_effect = journal_for_plan
+        self.journal.completed_sources.return_value = set()
+        self.journal.source_failed.return_value = False
+        # These orchestration tests mock the database; journal integration has real SQLite tests.
+        self.journal.source_ids = [1, 2, 3]
+        self.addCleanup(journal_patch.stop)
         self.config = Config(
             {
                 "crawler": {
