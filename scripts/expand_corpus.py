@@ -163,6 +163,7 @@ def main() -> None:
                 config.crawler.get("max_docs_per_source", 20)
             ),
             refresh_metadata_enabled=(wave == 1),
+            backup_enabled=False,  # forced checkpoint follows
         )
         waves_completed += 1
 

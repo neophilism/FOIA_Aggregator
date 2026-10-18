@@ -50,6 +50,7 @@ def run_once(
     dry_run: Optional[bool] = None,
     max_docs_per_source: Optional[int] = None,
     refresh_metadata_enabled: bool = True,
+    backup_enabled: bool = True,
 ) -> bool:
     """Run one crawl cycle.
 
@@ -138,7 +139,8 @@ def run_once(
             _record_unexpected_source_failure(cfg, rr["id"], exc)
 
     try:
-        backup_database_to_b2(cfg)
+        if backup_enabled:
+            backup_database_to_b2(cfg)
     except Exception as exc:
         logger.warning(
             "SQLite backup failed; crawl cycle remains successful and the "

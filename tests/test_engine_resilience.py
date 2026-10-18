@@ -131,6 +131,16 @@ class EngineResilienceTests(unittest.TestCase):
         self.assertTrue(metadata_ok)
         backup.assert_called_once_with(self.config)
 
+    def test_expansion_cycle_skips_implicit_backup(self):
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch("foia_archive.engine.get_reading_rooms_to_crawl", return_value=[]),
+            patch("foia_archive.engine.backup_database_to_b2") as backup,
+        ):
+            self.assertTrue(run_once(refresh_metadata_enabled=False, backup_enabled=False))
+        backup.assert_not_called()
+
     def test_database_failure_aborts_cycle_for_daemon_backoff(self):
         rooms = [{"id": 1}, {"id": 2}]
         with (
