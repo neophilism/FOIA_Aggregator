@@ -120,6 +120,17 @@ class SourceCensusCoverageTests(unittest.TestCase):
             [],
         )
 
+    def test_shared_ic_archive_retains_element_attributions(self):
+        elements = [
+            {"slug": "one", "name": "Element One", "parent_agency": "Agency One", "sources": [{"url": "https://agency.gov/foia", "mode": "official"}]},
+            {"slug": "two", "name": "Element Two", "parent_agency": "Agency One", "sources": [{"url": "https://agency.gov/foia", "mode": "official"}]},
+        ]
+        with patch("foia_archive.source_census.normalized_ic_elements", return_value=elements):
+            census = build_component_census(self.agencies, self.components, self.agencies)
+        rows = [row for row in census["source_instances"] if row["component_name"].startswith("Element")]
+        self.assertEqual({row["component_name"] for row in rows}, {"Element One", "Element Two"})
+        self.assertEqual(len({row["url"] for row in rows}), 1)
+
     def test_curated_component_closes_metadata_gap(self):
         agencies = [
             {

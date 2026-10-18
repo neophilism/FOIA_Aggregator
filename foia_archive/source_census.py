@@ -284,8 +284,7 @@ def build_component_census(
             continue
         for source in element["sources"]:
             url = source["url"]
-            if url in unique_source_urls:
-                continue
+            # Retain each IC element attribution even for shared archive URLs.
             unique_source_urls.add(url)
             source_instances.append(
                 {
