@@ -158,6 +158,20 @@ class EngineResilienceTests(unittest.TestCase):
                 run_once()
             initialize.assert_not_called()
 
+    def test_malformed_rate_limit_delay_fails_before_work(self):
+        for invalid in ("unlimited", -1, float("nan"), float("inf"), 90, True):
+            self.config.data["crawler"]["per_host_delay_seconds"] = invalid
+            with (
+                patch("foia_archive.engine.load_config", return_value=self.config),
+                patch("foia_archive.engine.init_db") as initialize,
+                patch("foia_archive.engine.refresh_metadata") as refresh,
+            ):
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    run_once()
+                initialize.assert_not_called()
+                refresh.assert_not_called()
+        self.config.data["crawler"]["per_host_delay_seconds"] = 0
+
     def test_metadata_can_be_intentionally_skipped(self):
         with (
             patch("foia_archive.engine.load_config", return_value=self.config),

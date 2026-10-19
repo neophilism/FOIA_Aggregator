@@ -4,6 +4,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 import sqlite3
 import time
+import math
 from typing import Optional
 
 from .database_backup import backup_database_to_b2
@@ -110,6 +111,16 @@ def run_once(
         cfg.crawler.get("maximum_cycle_seconds"),
         fallback=3600, label="cycle seconds",
     )
+    delay_raw = cfg.crawler.get("per_host_delay_seconds", 0.5)
+    try:
+        if type(delay_raw) is bool:
+            raise ValueError("Boolean delay invalid")
+        per_host_delay = float(delay_raw)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError("Invalid per-host request delay") from exc
+    if not math.isfinite(per_host_delay) or not 0 <= per_host_delay <= 60:
+        raise ValueError("Unbounded per-host request delay")
+
     cycle_start = time.monotonic()
 
     init_db(cfg.storage.get("db_path"), cfg.storage.get("files_dir"))
@@ -140,9 +151,7 @@ def run_once(
         f" (source limit {source_limit})" if source_limit else "",
     )
 
-    rate_limiter = HostRateLimiter(
-        float(cfg.crawler.get("per_host_delay_seconds", 0))
-    )
+    rate_limiter = HostRateLimiter(per_host_delay)
     for rr in rooms:
         if time.monotonic() - cycle_start >= cycle_limit_seconds:
             logger.warning(
