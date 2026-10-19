@@ -148,6 +148,16 @@ class EngineResilienceTests(unittest.TestCase):
             run_once(refresh_metadata_enabled=False)
         self.assertIs(crawl.call_args.kwargs["dry_run"], False)
 
+    def test_cycle_limit_uses_same_maximum_as_scale_policy(self):
+        self.config.data["crawler"]["maximum_cycle_seconds"] = 86400
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch("foia_archive.engine.get_reading_rooms_to_crawl", return_value=[]),
+            patch("foia_archive.engine.backup_database_to_b2"),
+        ):
+            self.assertTrue(run_once(refresh_metadata_enabled=False))
+
     def test_expired_cycle_budget_stops_starting_more_sources(self):
         self.config.data["crawler"]["maximum_cycle_seconds"] = 60
         with (

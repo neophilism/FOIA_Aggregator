@@ -47,7 +47,7 @@ def _record_unexpected_source_failure(
             conn.close()
 
 
-def _bounded_crawl_count(value, *, fallback: int, label: str) -> int:
+def _bounded_crawl_count(value, *, fallback: int, label: str, maximum: int = 10000) -> int:
     """Fail closed instead of silently crawling unlimited sources/documents."""
     if value is None:
         return fallback
@@ -57,7 +57,7 @@ def _bounded_crawl_count(value, *, fallback: int, label: str) -> int:
         parsed = int(value)
     else:
         raise ValueError(f"Invalid {label} crawl limit")
-    if not 1 <= parsed <= 10000:
+    if not 1 <= parsed <= maximum:
         raise ValueError(f"Unbounded {label} crawl limit")
     return parsed
 
@@ -144,7 +144,7 @@ def run_once(
     dry_run_flag = _validated_dry_run(cfg.crawler.get("dry_run", True))
     cycle_limit_seconds = _bounded_crawl_count(
         cfg.crawler.get("maximum_cycle_seconds"),
-        fallback=3600, label="cycle seconds",
+        fallback=3600, label="cycle seconds", maximum=86400,
     )
     delay_raw = cfg.crawler.get("per_host_delay_seconds", 0.5)
     try:
