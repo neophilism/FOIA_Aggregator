@@ -172,6 +172,18 @@ class EngineResilienceTests(unittest.TestCase):
                 refresh.assert_not_called()
         self.config.data["crawler"]["per_host_delay_seconds"] = 0
 
+    def test_live_crawl_requires_positive_rate_limit_delay(self):
+        self.config.data["crawler"]["dry_run"] = False
+        self.config.data["crawler"]["per_host_delay_seconds"] = 0
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db") as initialize,
+        ):
+            with self.assertRaisesRegex(ValueError, "positive per-host delay"):
+                run_once()
+            initialize.assert_not_called()
+        self.config.data["crawler"]["dry_run"] = True
+
     def test_metadata_can_be_intentionally_skipped(self):
         with (
             patch("foia_archive.engine.load_config", return_value=self.config),

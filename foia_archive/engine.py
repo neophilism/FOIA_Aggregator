@@ -120,6 +120,8 @@ def run_once(
         raise ValueError("Invalid per-host request delay") from exc
     if not math.isfinite(per_host_delay) or not 0 <= per_host_delay <= 60:
         raise ValueError("Unbounded per-host request delay")
+    if not dry_run_flag and per_host_delay <= 0:
+        raise ValueError("Live crawling requires a positive per-host delay")
 
     cycle_start = time.monotonic()
 
