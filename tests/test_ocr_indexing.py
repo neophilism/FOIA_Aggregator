@@ -133,6 +133,26 @@ class OCRExtractionTests(unittest.TestCase):
         self.assertEqual(result.method, "ocr")
         self.assertIn("scanned image", result.text)
 
+
+    def test_legacy_converter_stderr_is_spooled_not_captured_into_memory(self):
+        from types import SimpleNamespace
+        from foia_archive.text_extraction import extract_document_text
+        path = self.root / "legacy.doc"
+        path.write_bytes(b"not a real document")
+        def simulate_run(args, *, stdout, stderr, timeout, check):
+            self.assertTrue(hasattr(stderr, "write"))
+            self.assertTrue(hasattr(stdout, "write"))
+            stderr.write(b"E" * 4096)
+            return SimpleNamespace(returncode=2)
+        with (
+            patch("foia_archive.text_extraction.shutil.which", return_value="/usr/bin/antiword"),
+            patch("foia_archive.text_extraction.subprocess.run", side_effect=simulate_run),
+        ):
+            result = extract_document_text(path, "doc")
+        self.assertEqual(result.status, "extraction_failed")
+        self.assertIn("antiword exited with status 2", result.error)
+        self.assertLessEqual(len(result.error), 2000)
+
     def test_missing_tesseract_is_explicit_not_extraction_failure(self):
         path = self._blank_pdf()
 

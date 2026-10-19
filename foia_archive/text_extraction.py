@@ -401,12 +401,15 @@ def _extract_legacy_office(
         )
 
     byte_limit = max(4096, max_chars * 4)
-    with tempfile.TemporaryFile(mode="w+b") as output:
+    with (
+        tempfile.TemporaryFile(mode="w+b") as output,
+        tempfile.TemporaryFile(mode="w+b") as diagnostic,
+    ):
         try:
             completed = subprocess.run(
                 [executable, *command[1:], str(path)],
                 stdout=output,
-                stderr=subprocess.PIPE,
+                stderr=diagnostic,
                 timeout=max(1.0, min(float(timeout_seconds), 300.0)),
                 check=False,
             )
@@ -420,7 +423,10 @@ def _extract_legacy_office(
                 method="legacy_office",
             )
 
-        stderr = (completed.stderr or b"")[:2000].decode(
+        # A malicious or malformed converter may emit unbounded diagnostics.
+        # Spool them to disk, then read only the bounded portion we report.
+        diagnostic.seek(0)
+        stderr = diagnostic.read(2000).decode(
             "utf-8",
             errors="replace",
         ).strip()
