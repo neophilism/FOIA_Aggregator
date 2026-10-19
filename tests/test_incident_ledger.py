@@ -39,6 +39,13 @@ class IncidentLedgerTests(unittest.TestCase):
         ):
             with self.assertRaises(ValueError):
                 record_incident(self.conn, self.repo, decision)
+    def test_malformed_incident_payloads_fail_closed(self):
+        original = evaluate_alert(**self.base)
+        with self.assertRaises(ValueError):
+            record_incident(self.conn, self.repo, {**original, "severity": []})
+        with self.assertRaises(ValueError):
+            record_incident(self.conn, "../invalid", original)
+
     def test_distinct_source_revision_does_not_collide(self):
         first = record_incident(self.conn, self.repo, evaluate_alert(**self.base))
         second = record_incident(self.conn, self.repo, evaluate_alert(**{**self.base, "source_sha":"b"*40}))

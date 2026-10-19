@@ -42,7 +42,7 @@ def record_incident(conn: sqlite3.Connection, repository: str, decision: Mapping
     observed_at = decision.get("observed_at")
     if (not isinstance(source_sha, str) or not SHA.fullmatch(source_sha)
             or not isinstance(kind, str) or kind not in KINDS
-            or severity not in SEVERITIES
+            or not isinstance(severity, str) or severity not in SEVERITIES
             or decision.get("freshness") != "current"
             or decision.get("evidence_verified") is not True
             or not isinstance(observed_at, str) or not observed_at):
@@ -51,9 +51,10 @@ def record_incident(conn: sqlite3.Connection, repository: str, decision: Mapping
     incident_id = hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
     ensure_incident_ledger(conn)
     cursor = conn.execute("""
-        INSERT OR IGNORE INTO alert_incidents
+        INSERT INTO alert_incidents
             (incident_id, repository, source_sha, kind, severity, observed_at)
         VALUES (?, ?, ?, ?, ?, ?)
+        ON CONFLICT(incident_id) DO NOTHING
     """, (incident_id, repository, source_sha, kind, severity, observed_at))
     return {"incident_id": incident_id, "newly_recorded": cursor.rowcount == 1,
             "notification_sent": False}
