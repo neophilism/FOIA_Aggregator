@@ -353,19 +353,42 @@ def _extract_pdf(
 def _extract_docx(path: Path, max_chars: int) -> TextExtractionResult:
     document = Document(str(path))
     parts: list[str] = []
+    total = 0
+    truncated = False
+
+    def append_bounded(text: str) -> None:
+        nonlocal total, truncated
+        if not text:
+            return
+        if total >= max_chars:
+            truncated = True
+            return
+        available = max_chars - total
+        if len(text) > available:
+            truncated = True
+        clipped = text[:available]
+        parts.append(clipped)
+        total += len(clipped) + 1
 
     for paragraph in document.paragraphs:
-        if paragraph.text:
-            parts.append(paragraph.text)
+        append_bounded(paragraph.text)
+        if truncated:
+            break
 
-    for table in document.tables:
-        for row in table.rows:
-            parts.append("\t".join(cell.text for cell in row.cells))
+    if not truncated:
+        for table in document.tables:
+            for row in table.rows:
+                append_bounded("\t".join(cell.text for cell in row.cells))
+                if truncated:
+                    break
+            if truncated:
+                break
 
     return _cap_text(
         "\n".join(parts),
         max_chars,
         method="native_text",
+        force_truncated=truncated,
     )
 
 

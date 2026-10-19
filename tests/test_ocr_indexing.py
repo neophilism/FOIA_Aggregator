@@ -134,6 +134,19 @@ class OCRExtractionTests(unittest.TestCase):
         self.assertIn("scanned image", result.text)
 
 
+    def test_docx_extraction_bounded_before_gathering_full_document(self):
+        from docx import Document
+        path = self.root / "long.docx"
+        document = Document()
+        document.add_paragraph("A" * 800)
+        document.add_paragraph("B" * 800)
+        document.save(path)
+        result = extract_document_text(path, "docx", max_chars=1000)
+        self.assertEqual(result.status, "indexed_truncated")
+        self.assertTrue(result.truncated)
+        self.assertEqual(result.character_count, 1000)
+        self.assertEqual(result.text.count("A"), 800)
+
     def test_legacy_converter_stderr_is_spooled_not_captured_into_memory(self):
         from types import SimpleNamespace
         from foia_archive.text_extraction import extract_document_text
