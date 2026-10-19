@@ -134,6 +134,30 @@ class EngineResilienceTests(unittest.TestCase):
             run_once(refresh_metadata_enabled=False)
         self.assertIs(crawl.call_args.kwargs["dry_run"], False)
 
+    def test_expired_cycle_budget_stops_starting_more_sources(self):
+        self.config.data["crawler"]["maximum_cycle_seconds"] = 60
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch("foia_archive.engine.get_reading_rooms_to_crawl",
+                  return_value=[{"id":1},{"id":2},{"id":3}]),
+            patch("foia_archive.engine.time.monotonic", side_effect=[0, 1, 61]),
+            patch("foia_archive.engine.crawl_reading_room") as crawl,
+            patch("foia_archive.engine.backup_database_to_b2"),
+        ):
+            run_once(refresh_metadata_enabled=False)
+        self.assertEqual([call.args[0] for call in crawl.call_args_list], [1])
+
+    def test_invalid_cycle_limit_stops_before_database(self):
+        self.config.data["crawler"]["maximum_cycle_seconds"] = "unlimited"
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db") as initialize,
+        ):
+            with self.assertRaises(ValueError):
+                run_once()
+            initialize.assert_not_called()
+
     def test_metadata_can_be_intentionally_skipped(self):
         with (
             patch("foia_archive.engine.load_config", return_value=self.config),

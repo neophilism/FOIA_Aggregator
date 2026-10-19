@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 import sqlite3
+import time
 from typing import Optional
 
 from .database_backup import backup_database_to_b2
@@ -105,6 +106,11 @@ def run_once(
     )
 
     dry_run_flag = _validated_dry_run(cfg.crawler.get("dry_run", True))
+    cycle_limit_seconds = _bounded_crawl_count(
+        cfg.crawler.get("maximum_cycle_seconds"),
+        fallback=3600, label="cycle seconds",
+    )
+    cycle_start = time.monotonic()
 
     init_db(cfg.storage.get("db_path"), cfg.storage.get("files_dir"))
 
@@ -138,6 +144,11 @@ def run_once(
         float(cfg.crawler.get("per_host_delay_seconds", 0))
     )
     for rr in rooms:
+        if time.monotonic() - cycle_start >= cycle_limit_seconds:
+            logger.warning(
+                "Crawler cycle time budget exhausted; remaining sources deferred"
+            )
+            break
         try:
             crawl_reading_room(
                 rr["id"],
