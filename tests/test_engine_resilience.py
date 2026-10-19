@@ -108,6 +108,32 @@ class EngineResilienceTests(unittest.TestCase):
                 run_once()
             initialize.assert_not_called()
 
+    def test_malformed_dry_run_fails_before_db_or_network(self):
+        for invalid in ("maybe", 1, [], None):
+            self.config.data["crawler"]["dry_run"] = invalid
+            with (
+                patch("foia_archive.engine.load_config", return_value=self.config),
+                patch("foia_archive.engine.init_db") as initialize,
+                patch("foia_archive.engine.refresh_metadata") as refresh,
+            ):
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    run_once()
+                initialize.assert_not_called()
+                refresh.assert_not_called()
+        self.config.data["crawler"]["dry_run"] = True
+
+    def test_explicit_false_string_is_normalized_before_crawl(self):
+        self.config.data["crawler"]["dry_run"] = "false"
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch("foia_archive.engine.get_reading_rooms_to_crawl", return_value=[{"id": 7}]),
+            patch("foia_archive.engine.crawl_reading_room") as crawl,
+            patch("foia_archive.engine.backup_database_to_b2"),
+        ):
+            run_once(refresh_metadata_enabled=False)
+        self.assertIs(crawl.call_args.kwargs["dry_run"], False)
+
     def test_metadata_can_be_intentionally_skipped(self):
         with (
             patch("foia_archive.engine.load_config", return_value=self.config),

@@ -60,6 +60,19 @@ def _bounded_crawl_count(value, *, fallback: int, label: str) -> int:
     return parsed
 
 
+def _validated_dry_run(value) -> bool:
+    """Never turn a malformed dry-run setting into permission to write."""
+    if type(value) is bool:
+        return value
+    if type(value) is str:
+        normalized = value.strip().lower()
+        if normalized in {"true", "yes", "on", "1"}:
+            return True
+        if normalized in {"false", "no", "off", "0"}:
+            return False
+    raise ValueError("Invalid crawler.dry_run; explicit boolean required")
+
+
 def run_once(
     config_path: str = "config/settings.yaml",
     dry_run: Optional[bool] = None,
@@ -91,6 +104,8 @@ def run_once(
         fallback=10, label="per-source document",
     )
 
+    dry_run_flag = _validated_dry_run(cfg.crawler.get("dry_run", True))
+
     init_db(cfg.storage.get("db_path"), cfg.storage.get("files_dir"))
 
     metadata_ok = True
@@ -119,7 +134,6 @@ def run_once(
         f" (source limit {source_limit})" if source_limit else "",
     )
 
-    dry_run_flag = cfg.crawler.get("dry_run", True)
     rate_limiter = HostRateLimiter(
         float(cfg.crawler.get("per_host_delay_seconds", 0))
     )
