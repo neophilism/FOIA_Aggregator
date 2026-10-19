@@ -49,3 +49,22 @@ class ScaleBudget:
             reasons.append("cycle_timeout")
         return {"within_plan": not reasons, "reasons": reasons,
                 "crawl_authorized": False, "live_spend_authorized": False}
+
+    def assess_storage_headroom(self, *, archive_bytes, versioned_b2_bytes,
+                                proposed_archive_bytes, proposed_versioned_bytes):
+        """Budget-only forecast; trusted live B2 usage must be checked separately."""
+        counters = (archive_bytes, versioned_b2_bytes,
+                    proposed_archive_bytes, proposed_versioned_bytes)
+        if any(type(value) is not int or value < 0 for value in counters):
+            raise ValueError("Invalid storage usage measurement")
+        archive_ceiling = 8_500_000_000
+        versioned_ceiling = 9_000_000_000
+        reasons = []
+        if archive_bytes + proposed_archive_bytes > archive_ceiling:
+            reasons.append("archive_budget")
+        if versioned_b2_bytes + proposed_versioned_bytes > versioned_ceiling:
+            reasons.append("versioned_storage_budget")
+        return {"within_plan": not reasons, "reasons": reasons,
+                "archive_ceiling_bytes": archive_ceiling,
+                "versioned_ceiling_bytes": versioned_ceiling,
+                "upload_authorized": False, "live_spend_authorized": False}
