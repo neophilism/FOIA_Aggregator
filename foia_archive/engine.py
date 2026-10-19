@@ -45,6 +45,21 @@ def _record_unexpected_source_failure(
             conn.close()
 
 
+def _bounded_crawl_count(value, *, fallback: int, label: str) -> int:
+    """Fail closed instead of silently crawling unlimited sources/documents."""
+    if value is None:
+        return fallback
+    if type(value) is int:
+        parsed = value
+    elif type(value) is str and value.isascii() and value.isdecimal():
+        parsed = int(value)
+    else:
+        raise ValueError(f"Invalid {label} crawl limit")
+    if not 1 <= parsed <= 10000:
+        raise ValueError(f"Unbounded {label} crawl limit")
+    return parsed
+
+
 def run_once(
     config_path: str = "config/settings.yaml",
     dry_run: Optional[bool] = None,
@@ -65,6 +80,15 @@ def run_once(
                 "max_docs_per_source": max_docs_per_source,
             }
         },
+    )
+
+    # Validate resource limits before any database or external network action.
+    source_limit = _bounded_crawl_count(
+        cfg.crawler.get("source_limit"), fallback=10000, label="source"
+    )
+    max_docs = _bounded_crawl_count(
+        cfg.crawler.get("max_docs_per_source"),
+        fallback=10, label="per-source document",
     )
 
     init_db(cfg.storage.get("db_path"), cfg.storage.get("files_dir"))
@@ -88,17 +112,6 @@ def run_once(
             "(refresh cadence not yet due)"
         )
 
-    source_limit_raw = cfg.crawler.get("source_limit")
-    source_limit = None
-    if source_limit_raw is not None:
-        try:
-            parsed_limit = int(source_limit_raw)
-            source_limit = parsed_limit if parsed_limit > 0 else None
-        except (TypeError, ValueError):
-            logger.warning(
-                "Invalid crawler.source_limit; crawling all eligible sources"
-            )
-
     rooms = get_reading_rooms_to_crawl(cfg, limit=source_limit)
     logger.info(
         "Crawling %s reading rooms%s",
@@ -107,7 +120,6 @@ def run_once(
     )
 
     dry_run_flag = cfg.crawler.get("dry_run", True)
-    max_docs = cfg.crawler.get("max_docs_per_source")
     rate_limiter = HostRateLimiter(
         float(cfg.crawler.get("per_host_delay_seconds", 0))
     )

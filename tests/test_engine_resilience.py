@@ -72,6 +72,42 @@ class EngineResilienceTests(unittest.TestCase):
 
         rooms.assert_called_once_with(self.config, limit=7)
 
+    def test_missing_source_limit_defaults_to_finite_limit(self):
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch("foia_archive.engine.get_reading_rooms_to_crawl", return_value=[]) as rooms,
+            patch("foia_archive.engine.backup_database_to_b2"),
+        ):
+            run_once(refresh_metadata_enabled=False)
+        rooms.assert_called_once_with(self.config, limit=10000)
+
+    def test_malformed_source_limit_fails_before_database_or_crawl(self):
+        for invalid in ("bad", -1, 0, True, float("nan"), 10001):
+            self.config.data["crawler"]["source_limit"] = invalid
+            with (
+                patch("foia_archive.engine.load_config", return_value=self.config),
+                patch("foia_archive.engine.init_db") as initialize,
+                patch("foia_archive.engine.refresh_metadata") as refresh,
+                patch("foia_archive.engine.get_reading_rooms_to_crawl") as rooms,
+            ):
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    run_once()
+                initialize.assert_not_called()
+                refresh.assert_not_called()
+                rooms.assert_not_called()
+        self.config.data["crawler"].pop("source_limit", None)
+
+    def test_malformed_document_limit_also_fails_before_work(self):
+        self.config.data["crawler"]["max_docs_per_source"] = "unlimited"
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db") as initialize,
+        ):
+            with self.assertRaises(ValueError):
+                run_once()
+            initialize.assert_not_called()
+
     def test_metadata_can_be_intentionally_skipped(self):
         with (
             patch("foia_archive.engine.load_config", return_value=self.config),
