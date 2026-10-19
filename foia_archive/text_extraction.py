@@ -70,6 +70,8 @@ class OCRSettings:
                 parsed = float(data.get(name, default))
             except (TypeError, ValueError):
                 parsed = default
+            if not math.isfinite(parsed):
+                parsed = default
             return max(minimum, min(maximum, parsed))
 
         languages = str(data.get("languages") or "eng").strip() or "eng"
@@ -351,19 +353,42 @@ def _extract_pdf(
 def _extract_docx(path: Path, max_chars: int) -> TextExtractionResult:
     document = Document(str(path))
     parts: list[str] = []
+    total = 0
+    truncated = False
+
+    def append_bounded(text: str) -> None:
+        nonlocal total, truncated
+        if not text:
+            return
+        if total >= max_chars:
+            truncated = True
+            return
+        available = max_chars - total
+        if len(text) > available:
+            truncated = True
+        clipped = text[:available]
+        parts.append(clipped)
+        total += len(clipped) + 1
 
     for paragraph in document.paragraphs:
-        if paragraph.text:
-            parts.append(paragraph.text)
+        append_bounded(paragraph.text)
+        if truncated:
+            break
 
-    for table in document.tables:
-        for row in table.rows:
-            parts.append("\t".join(cell.text for cell in row.cells))
+    if not truncated:
+        for table in document.tables:
+            for row in table.rows:
+                append_bounded("\t".join(cell.text for cell in row.cells))
+                if truncated:
+                    break
+            if truncated:
+                break
 
     return _cap_text(
         "\n".join(parts),
         max_chars,
         method="native_text",
+        force_truncated=truncated,
     )
 
 
@@ -399,12 +424,15 @@ def _extract_legacy_office(
         )
 
     byte_limit = max(4096, max_chars * 4)
-    with tempfile.TemporaryFile(mode="w+b") as output:
+    with (
+        tempfile.TemporaryFile(mode="w+b") as output,
+        tempfile.TemporaryFile(mode="w+b") as diagnostic,
+    ):
         try:
             completed = subprocess.run(
                 [executable, *command[1:], str(path)],
                 stdout=output,
-                stderr=subprocess.PIPE,
+                stderr=diagnostic,
                 timeout=max(1.0, min(float(timeout_seconds), 300.0)),
                 check=False,
             )
@@ -418,7 +446,10 @@ def _extract_legacy_office(
                 method="legacy_office",
             )
 
-        stderr = (completed.stderr or b"")[:2000].decode(
+        # A malicious or malformed converter may emit unbounded diagnostics.
+        # Spool them to disk, then read only the bounded portion we report.
+        diagnostic.seek(0)
+        stderr = diagnostic.read(2000).decode(
             "utf-8",
             errors="replace",
         ).strip()

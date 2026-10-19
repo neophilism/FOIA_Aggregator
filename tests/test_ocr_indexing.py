@@ -45,6 +45,14 @@ class OCRSettingsTests(unittest.TestCase):
         self.assertEqual(settings.max_image_megapixels, 100.0)
 
 
+    def test_nonfinite_ocr_limits_use_safe_defaults(self):
+        for value in ("nan", "inf", "-inf"):
+            with self.subTest(value=value):
+                settings = OCRSettings.from_mapping({"page_timeout_seconds": value, "max_image_megapixels": value})
+                self.assertEqual(settings.page_timeout_seconds, 45.0)
+                self.assertEqual(settings.max_image_megapixels, 20.0)
+
+
 class OCRExtractionTests(unittest.TestCase):
     def setUp(self):
         self.tempdir = tempfile.TemporaryDirectory()
@@ -124,6 +132,39 @@ class OCRExtractionTests(unittest.TestCase):
         self.assertEqual(result.status, "indexed")
         self.assertEqual(result.method, "ocr")
         self.assertIn("scanned image", result.text)
+
+
+    def test_docx_extraction_bounded_before_gathering_full_document(self):
+        from docx import Document
+        path = self.root / "long.docx"
+        document = Document()
+        document.add_paragraph("A" * 800)
+        document.add_paragraph("B" * 800)
+        document.save(path)
+        result = extract_document_text(path, "docx", max_chars=1000)
+        self.assertEqual(result.status, "indexed_truncated")
+        self.assertTrue(result.truncated)
+        self.assertEqual(result.character_count, 1000)
+        self.assertEqual(result.text.count("A"), 800)
+
+    def test_legacy_converter_stderr_is_spooled_not_captured_into_memory(self):
+        from types import SimpleNamespace
+        from foia_archive.text_extraction import extract_document_text
+        path = self.root / "legacy.doc"
+        path.write_bytes(b"not a real document")
+        def simulate_run(args, *, stdout, stderr, timeout, check):
+            self.assertTrue(hasattr(stderr, "write"))
+            self.assertTrue(hasattr(stdout, "write"))
+            stderr.write(b"E" * 4096)
+            return SimpleNamespace(returncode=2)
+        with (
+            patch("foia_archive.text_extraction.shutil.which", return_value="/usr/bin/antiword"),
+            patch("foia_archive.text_extraction.subprocess.run", side_effect=simulate_run),
+        ):
+            result = extract_document_text(path, "doc")
+        self.assertEqual(result.status, "extraction_failed")
+        self.assertIn("antiword exited with status 2", result.error)
+        self.assertLessEqual(len(result.error), 2000)
 
     def test_missing_tesseract_is_explicit_not_extraction_failure(self):
         path = self._blank_pdf()
