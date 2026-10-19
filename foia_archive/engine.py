@@ -62,6 +62,41 @@ def _bounded_crawl_count(value, *, fallback: int, label: str) -> int:
     return parsed
 
 
+def _validate_page_limits(crawler) -> None:
+    """Reject unsafe page budgets before metadata, database or crawler work."""
+    for name, default, minimum, maximum in (
+        ("max_pages_per_source", 50, 1, 5000),
+        ("max_discovered_docs_per_source", 1000, 1, 10000),
+        ("max_depth", 3, 0, 10),
+    ):
+        _bounded_integer(crawler.get(name, default), minimum, maximum, name)
+    for name, default, minimum, maximum in (
+        ("page_timeout_seconds", 30, 1.0, 300.0),
+        ("page_max_size_mb", 5, 0.1, 100.0),
+    ):
+        value = crawler.get(name, default)
+        if type(value) not in (int, float, str):
+            raise ValueError("Invalid crawler." + name)
+        try:
+            parsed = float(value)
+        except (ValueError, OverflowError) as exc:
+            raise ValueError("Invalid crawler." + name) from exc
+        if not math.isfinite(parsed) or not minimum <= parsed <= maximum:
+            raise ValueError("Unbounded crawler." + name)
+
+
+def _bounded_integer(value, minimum: int, maximum: int, label: str) -> int:
+    if type(value) is int:
+        parsed = value
+    elif type(value) is str and value.isascii() and value.isdecimal():
+        parsed = int(value)
+    else:
+        raise ValueError("Invalid crawler." + label)
+    if not minimum <= parsed <= maximum:
+        raise ValueError("Unbounded crawler." + label)
+    return parsed
+
+
 def _validated_dry_run(value) -> bool:
     """Never turn a malformed dry-run setting into permission to write."""
     if type(value) is bool:
@@ -122,6 +157,7 @@ def run_once(
         raise ValueError("Unbounded per-host request delay")
     if not dry_run_flag and per_host_delay <= 0:
         raise ValueError("Live crawling requires a positive per-host delay")
+    _validate_page_limits(cfg.crawler)
 
     cycle_start = time.monotonic()
 

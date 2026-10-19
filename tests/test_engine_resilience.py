@@ -184,6 +184,31 @@ class EngineResilienceTests(unittest.TestCase):
             initialize.assert_not_called()
         self.config.data["crawler"]["dry_run"] = True
 
+    def test_malformed_page_and_depth_limits_fail_before_work(self):
+        invalid_settings = (
+            ("max_pages_per_source", -1),
+            ("max_pages_per_source", True),
+            ("max_discovered_docs_per_source", 10001),
+            ("max_depth", -1),
+            ("max_depth", 11),
+            ("page_timeout_seconds", float("inf")),
+            ("page_timeout_seconds", "not-a-number"),
+            ("page_max_size_mb", float("nan")),
+            ("page_max_size_mb", 200),
+        )
+        for key, invalid in invalid_settings:
+            self.config.data["crawler"][key] = invalid
+            with (
+                patch("foia_archive.engine.load_config", return_value=self.config),
+                patch("foia_archive.engine.init_db") as initialize,
+                patch("foia_archive.engine.refresh_metadata") as refresh,
+            ):
+                with self.subTest(key=key, invalid=invalid), self.assertRaises(ValueError):
+                    run_once()
+                initialize.assert_not_called()
+                refresh.assert_not_called()
+            del self.config.data["crawler"][key]
+
     def test_metadata_can_be_intentionally_skipped(self):
         with (
             patch("foia_archive.engine.load_config", return_value=self.config),
