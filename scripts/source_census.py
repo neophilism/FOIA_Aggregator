@@ -352,7 +352,7 @@ def write_markdown(census: dict, path: Path) -> None:
         entry["components"] += 1
         if not row.get("historical_note"):
             entry["current_components"] += 1
-        if row["recognized_source_count"] > 0:
+        if not row.get("historical_note") and row["recognized_source_count"] > 0:
             entry["components_with_source"] += 1
 
     current_agencies_without_source = sorted(
