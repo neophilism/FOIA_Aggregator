@@ -234,6 +234,16 @@ class SourceCensusCoverageTests(unittest.TestCase):
         )
 
 
+
+    def test_unordered_metadata_set_is_reported_in_stable_order(self):
+        from foia_archive.source_census import iter_url_fields
+        record = {"sources": {"https://example.gov/z/foia", "https://example.gov/a/foia"}}
+        first = [field.url for field in iter_url_fields(record)]
+        second = [field.url for field in iter_url_fields(record)]
+        self.assertEqual(first, second)
+        self.assertEqual(first, sorted(first))
+
+
 class SourceProbeTests(unittest.TestCase):
     def probe_with_response(self, response, final_url="https://agency.gov/foia"):
         with patch(

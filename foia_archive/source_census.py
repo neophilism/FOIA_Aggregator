@@ -121,7 +121,9 @@ def iter_url_fields(value: Any, path: Tuple[str, ...] = ()) -> Iterable[URLField
         return
 
     if isinstance(value, (list, tuple, set)):
-        for nested in value:
+        # Sets have no stable iteration order; audits must remain reproducible.
+        ordered = sorted(value, key=repr) if isinstance(value, set) else value
+        for nested in ordered:
             yield from iter_url_fields(nested, path)
 
 
