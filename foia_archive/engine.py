@@ -182,7 +182,9 @@ def run_once(
             "(refresh cadence not yet due)"
         )
 
+    # Enforce the cap locally even if a provider adapter ignores its limit.
     rooms = get_reading_rooms_to_crawl(cfg, limit=source_limit)
+    rooms = rooms[:source_limit]
     logger.info(
         "Crawling %s reading rooms%s",
         len(rooms),

@@ -72,6 +72,20 @@ class EngineResilienceTests(unittest.TestCase):
 
         rooms.assert_called_once_with(self.config, limit=7)
 
+    def test_selector_cannot_override_source_count_limit(self):
+        self.config.data["crawler"]["source_limit"] = 2
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch("foia_archive.engine.get_reading_rooms_to_crawl",
+                  return_value=[{"id":1},{"id":2},{"id":3}]),
+            patch("foia_archive.engine.crawl_reading_room") as crawl,
+            patch("foia_archive.engine.backup_database_to_b2"),
+        ):
+            run_once(refresh_metadata_enabled=False)
+        self.assertEqual([call.args[0] for call in crawl.call_args_list], [1, 2])
+        self.config.data["crawler"].pop("source_limit", None)
+
     def test_missing_source_limit_defaults_to_finite_limit(self):
         with (
             patch("foia_archive.engine.load_config", return_value=self.config),
