@@ -72,6 +72,167 @@ class EngineResilienceTests(unittest.TestCase):
 
         rooms.assert_called_once_with(self.config, limit=7)
 
+    def test_selector_cannot_override_source_count_limit(self):
+        self.config.data["crawler"]["source_limit"] = 2
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch("foia_archive.engine.get_reading_rooms_to_crawl",
+                  return_value=[{"id":1},{"id":2},{"id":3}]),
+            patch("foia_archive.engine.crawl_reading_room") as crawl,
+            patch("foia_archive.engine.backup_database_to_b2"),
+        ):
+            run_once(refresh_metadata_enabled=False)
+        self.assertEqual([call.args[0] for call in crawl.call_args_list], [1, 2])
+        self.config.data["crawler"].pop("source_limit", None)
+
+    def test_missing_source_limit_defaults_to_finite_limit(self):
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch("foia_archive.engine.get_reading_rooms_to_crawl", return_value=[]) as rooms,
+            patch("foia_archive.engine.backup_database_to_b2"),
+        ):
+            run_once(refresh_metadata_enabled=False)
+        rooms.assert_called_once_with(self.config, limit=10000)
+
+    def test_malformed_source_limit_fails_before_database_or_crawl(self):
+        for invalid in ("bad", -1, 0, True, float("nan"), 10001):
+            self.config.data["crawler"]["source_limit"] = invalid
+            with (
+                patch("foia_archive.engine.load_config", return_value=self.config),
+                patch("foia_archive.engine.init_db") as initialize,
+                patch("foia_archive.engine.refresh_metadata") as refresh,
+                patch("foia_archive.engine.get_reading_rooms_to_crawl") as rooms,
+            ):
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    run_once()
+                initialize.assert_not_called()
+                refresh.assert_not_called()
+                rooms.assert_not_called()
+        self.config.data["crawler"].pop("source_limit", None)
+
+    def test_malformed_document_limit_also_fails_before_work(self):
+        self.config.data["crawler"]["max_docs_per_source"] = "unlimited"
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db") as initialize,
+        ):
+            with self.assertRaises(ValueError):
+                run_once()
+            initialize.assert_not_called()
+
+    def test_malformed_dry_run_fails_before_db_or_network(self):
+        for invalid in ("maybe", 1, [], None):
+            self.config.data["crawler"]["dry_run"] = invalid
+            with (
+                patch("foia_archive.engine.load_config", return_value=self.config),
+                patch("foia_archive.engine.init_db") as initialize,
+                patch("foia_archive.engine.refresh_metadata") as refresh,
+            ):
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    run_once()
+                initialize.assert_not_called()
+                refresh.assert_not_called()
+        self.config.data["crawler"]["dry_run"] = True
+
+    def test_explicit_false_string_is_normalized_before_crawl(self):
+        self.config.data["crawler"]["dry_run"] = "false"
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch("foia_archive.engine.get_reading_rooms_to_crawl", return_value=[{"id": 7}]),
+            patch("foia_archive.engine.crawl_reading_room") as crawl,
+            patch("foia_archive.engine.backup_database_to_b2"),
+        ):
+            run_once(refresh_metadata_enabled=False)
+        self.assertIs(crawl.call_args.kwargs["dry_run"], False)
+
+    def test_cycle_limit_uses_same_maximum_as_scale_policy(self):
+        self.config.data["crawler"]["maximum_cycle_seconds"] = 86400
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch("foia_archive.engine.get_reading_rooms_to_crawl", return_value=[]),
+            patch("foia_archive.engine.backup_database_to_b2"),
+        ):
+            self.assertTrue(run_once(refresh_metadata_enabled=False))
+
+    def test_expired_cycle_budget_stops_starting_more_sources(self):
+        self.config.data["crawler"]["maximum_cycle_seconds"] = 60
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch("foia_archive.engine.get_reading_rooms_to_crawl",
+                  return_value=[{"id":1},{"id":2},{"id":3}]),
+            patch("foia_archive.engine.time.monotonic", side_effect=[0, 1, 61]),
+            patch("foia_archive.engine.crawl_reading_room") as crawl,
+            patch("foia_archive.engine.backup_database_to_b2"),
+        ):
+            run_once(refresh_metadata_enabled=False)
+        self.assertEqual([call.args[0] for call in crawl.call_args_list], [1])
+
+    def test_invalid_cycle_limit_stops_before_database(self):
+        self.config.data["crawler"]["maximum_cycle_seconds"] = "unlimited"
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db") as initialize,
+        ):
+            with self.assertRaises(ValueError):
+                run_once()
+            initialize.assert_not_called()
+
+    def test_malformed_rate_limit_delay_fails_before_work(self):
+        for invalid in ("unlimited", -1, float("nan"), float("inf"), 90, True):
+            self.config.data["crawler"]["per_host_delay_seconds"] = invalid
+            with (
+                patch("foia_archive.engine.load_config", return_value=self.config),
+                patch("foia_archive.engine.init_db") as initialize,
+                patch("foia_archive.engine.refresh_metadata") as refresh,
+            ):
+                with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                    run_once()
+                initialize.assert_not_called()
+                refresh.assert_not_called()
+        self.config.data["crawler"]["per_host_delay_seconds"] = 0
+
+    def test_live_crawl_requires_positive_rate_limit_delay(self):
+        self.config.data["crawler"]["dry_run"] = False
+        self.config.data["crawler"]["per_host_delay_seconds"] = 0
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db") as initialize,
+        ):
+            with self.assertRaisesRegex(ValueError, "positive per-host delay"):
+                run_once()
+            initialize.assert_not_called()
+        self.config.data["crawler"]["dry_run"] = True
+
+    def test_malformed_page_and_depth_limits_fail_before_work(self):
+        invalid_settings = (
+            ("max_pages_per_source", -1),
+            ("max_pages_per_source", True),
+            ("max_discovered_docs_per_source", 10001),
+            ("max_depth", -1),
+            ("max_depth", 11),
+            ("page_timeout_seconds", float("inf")),
+            ("page_timeout_seconds", "not-a-number"),
+            ("page_max_size_mb", float("nan")),
+            ("page_max_size_mb", 200),
+        )
+        for key, invalid in invalid_settings:
+            self.config.data["crawler"][key] = invalid
+            with (
+                patch("foia_archive.engine.load_config", return_value=self.config),
+                patch("foia_archive.engine.init_db") as initialize,
+                patch("foia_archive.engine.refresh_metadata") as refresh,
+            ):
+                with self.subTest(key=key, invalid=invalid), self.assertRaises(ValueError):
+                    run_once()
+                initialize.assert_not_called()
+                refresh.assert_not_called()
+            del self.config.data["crawler"][key]
+
     def test_metadata_can_be_intentionally_skipped(self):
         with (
             patch("foia_archive.engine.load_config", return_value=self.config),
