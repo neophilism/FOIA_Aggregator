@@ -120,6 +120,17 @@ class SourceCensusCoverageTests(unittest.TestCase):
             [],
         )
 
+    def test_shared_ic_archive_retains_element_attributions(self):
+        elements = [
+            {"slug": "one", "name": "Element One", "parent_agency": "Agency One", "sources": [{"url": "https://agency.gov/foia", "mode": "official"}]},
+            {"slug": "two", "name": "Element Two", "parent_agency": "Agency One", "sources": [{"url": "https://agency.gov/foia", "mode": "official"}]},
+        ]
+        with patch("foia_archive.source_census.normalized_ic_elements", return_value=elements):
+            census = build_component_census(self.agencies, self.components, self.agencies)
+        rows = [row for row in census["source_instances"] if row["component_name"].startswith("Element")]
+        self.assertEqual({row["component_name"] for row in rows}, {"Element One", "Element Two"})
+        self.assertEqual(len({row["url"] for row in rows}), 1)
+
     def test_curated_component_closes_metadata_gap(self):
         agencies = [
             {
@@ -193,6 +204,27 @@ class SourceCensusCoverageTests(unittest.TestCase):
             0,
         )
 
+    def test_historical_source_does_not_cover_current_agency_component(self):
+        agencies = [{"id": "agency-1", "attributes": {"name": "Agency One"}}]
+        components = [
+            {
+                "id": "034ea4e5-220d-497d-9e69-1889f005bc81",
+                "attributes": {"title": "Recovery Accountability and Transparency Board",
+                    "reading_rooms": ["https://agency.gov/foia/archive"]},
+                "relationships": {"agency": {"data": {"id": "agency-1"}}},
+            },
+            {
+                "id": "active-component",
+                "attributes": {"title": "Current office"},
+                "relationships": {"agency": {"data": {"id": "agency-1"}}},
+            },
+        ]
+        census = build_component_census(agencies, components, agencies)
+        self.assertEqual(census["summary"]["current_agencies_without_recognized_source"], 1)
+        current = next(row for row in census["components"] if row["component_id"] == "active-component")
+        self.assertEqual(current["coverage_status"], "uncovered")
+        self.assertFalse(current["agency_has_recognized_source"])
+
     def test_component_without_own_source_is_marked_covered_when_agency_has_source(self):
         census = build_component_census(
             self.agencies,
@@ -221,6 +253,16 @@ class SourceCensusCoverageTests(unittest.TestCase):
                 "https://agency.gov/foia/reading-room",
             )
         )
+
+
+
+    def test_unordered_metadata_set_is_reported_in_stable_order(self):
+        from foia_archive.source_census import iter_url_fields
+        record = {"sources": {"https://example.gov/z/foia", "https://example.gov/a/foia"}}
+        first = [field.url for field in iter_url_fields(record)]
+        second = [field.url for field in iter_url_fields(record)]
+        self.assertEqual(first, second)
+        self.assertEqual(first, sorted(first))
 
 
 class SourceProbeTests(unittest.TestCase):

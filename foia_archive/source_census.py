@@ -121,7 +121,9 @@ def iter_url_fields(value: Any, path: Tuple[str, ...] = ()) -> Iterable[URLField
         return
 
     if isinstance(value, (list, tuple, set)):
-        for nested in value:
+        # Sets have no stable iteration order; audits must remain reproducible.
+        ordered = sorted(value, key=repr) if isinstance(value, set) else value
+        for nested in ordered:
             yield from iter_url_fields(nested, path)
 
 
@@ -284,8 +286,7 @@ def build_component_census(
             continue
         for source in element["sources"]:
             url = source["url"]
-            if url in unique_source_urls:
-                continue
+            # Retain each IC element attribution even for shared archive URLs.
             unique_source_urls.add(url)
             source_instances.append(
                 {
@@ -322,8 +323,15 @@ def build_component_census(
     }
     current_agency_ids = agency_ids - historical_agency_ids
     agency_ids_without_source = agency_ids - agency_ids_with_source
+    # Historical component archives do not establish present-day agency coverage.
+    current_agency_ids_with_source = {
+        row["agency_id"]
+        for row in component_rows
+        if row["agency_id"] and not row["historical_note"]
+        and row["recognized_source_count"] > 0
+    }
     current_agency_ids_without_source = (
-        current_agency_ids - agency_ids_with_source
+        current_agency_ids - current_agency_ids_with_source
     )
     historical_component_count = sum(
         1 for row in component_rows if row["historical_note"]
@@ -334,12 +342,18 @@ def build_component_census(
             coverage_status = "historical"
         elif row["recognized_source_count"] > 0:
             coverage_status = "direct"
-        elif row["agency_id"] in agency_ids_with_source:
+        elif row["agency_id"] in (
+            agency_ids_with_source if row["historical_note"]
+            else current_agency_ids_with_source
+        ):
             coverage_status = "covered_by_agency"
         else:
             coverage_status = "uncovered"
         row["agency_has_recognized_source"] = (
-            row["agency_id"] in agency_ids_with_source
+            row["agency_id"] in (
+                agency_ids_with_source if row["historical_note"]
+                else current_agency_ids_with_source
+            )
         )
         row["coverage_status"] = coverage_status
 
