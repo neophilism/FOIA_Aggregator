@@ -1,0 +1,12 @@
+name: Deployment monitor contract
+on:
+  pull_request:
+    paths:
+      - .github/deployment-monitor.json
+      - .github/workflows/deployment-monitor-contract.yml
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  contract:
+    uses: neophilism/Development-Deployment-Monitor/.github/workflows/validate-client.yml@main
