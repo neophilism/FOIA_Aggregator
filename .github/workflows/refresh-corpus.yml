@@ -6,14 +6,11 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: autonomous-corpus-refresh
+  group: foia-b2-single-writer
   cancel-in-progress: false
 
 jobs:
   refresh:
-    # Deliberately OFF until storage is upgraded. Set the repository variable
-    # FOIA_AUTONOMOUS_REFRESH_ENABLED=true to activate scheduled runs.
-    if: github.event_name == 'workflow_dispatch' || vars.FOIA_AUTONOMOUS_REFRESH_ENABLED == 'true'
     runs-on: ubuntu-22.04
     timeout-minutes: 180
     env:
