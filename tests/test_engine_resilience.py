@@ -19,6 +19,18 @@ from foia_archive.utils import Config
 
 class EngineResilienceTests(unittest.TestCase):
     def setUp(self):
+        journal_patch = patch("foia_archive.engine.RunJournal")
+        journal_class = journal_patch.start()
+        self.journal = journal_class.return_value
+        def journal_for_plan(db_path, fingerprint, ids):
+            self.journal.source_ids = ids
+            return self.journal
+        journal_class.side_effect = journal_for_plan
+        self.journal.completed_sources.return_value = set()
+        self.journal.source_failed.return_value = False
+        # These orchestration tests mock the database; journal integration has real SQLite tests.
+        self.journal.source_ids = [1, 2, 3]
+        self.addCleanup(journal_patch.stop)
         self.config = Config(
             {
                 "crawler": {
@@ -130,6 +142,16 @@ class EngineResilienceTests(unittest.TestCase):
 
         self.assertTrue(metadata_ok)
         backup.assert_called_once_with(self.config)
+
+    def test_expansion_cycle_skips_implicit_backup(self):
+        with (
+            patch("foia_archive.engine.load_config", return_value=self.config),
+            patch("foia_archive.engine.init_db"),
+            patch("foia_archive.engine.get_reading_rooms_to_crawl", return_value=[]),
+            patch("foia_archive.engine.backup_database_to_b2") as backup,
+        ):
+            self.assertTrue(run_once(refresh_metadata_enabled=False, backup_enabled=False))
+        backup.assert_not_called()
 
     def test_database_failure_aborts_cycle_for_daemon_backoff(self):
         rooms = [{"id": 1}, {"id": 2}]

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hashlib
 import ipaddress
+import math
 import os
 import posixpath
 import re
@@ -383,6 +384,15 @@ def get_reading_rooms_to_crawl(config: Config, limit: Optional[int] = None):
     finally:
         conn.close()
 
+    # Rotate bounded waves by least recent attempt. Never-crawled sources come
+    # first; agency breadth is then applied without starving later source IDs.
+    def attempted(room):
+        keys = room.keys()
+        value = room["last_crawled_at"] if "last_crawled_at" in keys else None
+        stamp = _parse_utc_timestamp(value)
+        return (stamp is not None, stamp or datetime.min.replace(tzinfo=timezone.utc), room["id"])
+    rooms = sorted(rooms, key=attempted)
+
     try:
         cooldown_minutes = max(
             0.0,
@@ -392,6 +402,9 @@ def get_reading_rooms_to_crawl(config: Config, limit: Optional[int] = None):
         logger.warning(
             "Invalid failed_source_retry_minutes; using 60-minute cooldown"
         )
+        cooldown_minutes = 60.0
+
+    if not math.isfinite(cooldown_minutes):
         cooldown_minutes = 60.0
 
     if cooldown_minutes <= 0:

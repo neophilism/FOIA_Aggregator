@@ -179,6 +179,11 @@ def _migration_6_extraction_method(conn: sqlite3.Connection) -> None:
     )
 
 
+def _migration_7_ingestion_receipts(conn: sqlite3.Connection) -> None:
+    from .ingestion_journal import create_tables
+    create_tables(conn)
+
+
 MIGRATIONS: Tuple[
     Tuple[int, str, Callable[[sqlite3.Connection], None]],
     ...,
@@ -189,6 +194,7 @@ MIGRATIONS: Tuple[
     (4, "archive storage backends", _migration_4_archive_storage),
     (5, "document full text search", _migration_5_full_text_search),
     (6, "text extraction method", _migration_6_extraction_method),
+    (7, "durable ingestion receipts", _migration_7_ingestion_receipts),
 )
 
 
