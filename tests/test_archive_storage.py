@@ -254,7 +254,15 @@ class ArchiveStorageTests(unittest.TestCase):
 
         self.assertIsInstance(backend, B2ArchiveStorage)
         self.assertEqual(backend.max_archive_bytes, 123)
-        create_client.assert_called_once()
+        self.assertEqual(create_client.call_count, 2)
+        for call in create_client.call_args_list:
+            self.assertEqual(call.args, ("s3",))
+            self.assertEqual(call.kwargs["aws_access_key_id"], "key-id")
+            self.assertEqual(call.kwargs["aws_secret_access_key"], "secret")
+            self.assertEqual(call.kwargs["endpoint_url"], "https://endpoint.example")
+            self.assertEqual(call.kwargs["region_name"], "region")
+        self.assertNotIn("config", create_client.call_args_list[0].kwargs)
+        self.assertEqual(create_client.call_args_list[1].kwargs["config"].retries["total_max_attempts"], 1)
 
     def test_factory_discovers_unique_bucket_from_scoped_key(self):
         config = Config(
@@ -440,3 +448,4 @@ class ArchiveStorageTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+

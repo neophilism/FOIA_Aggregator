@@ -55,6 +55,10 @@ ocr:
 
 database_backup:
   enabled: true
+  # Bound both network/disk input and gzip expansion. Exceeding a limit fails
+  # before publication/pruning; changing these is not a storage-cap increase.
+  max_compressed_bytes: 268435456
+  max_restored_bytes: 2147483648
   interval_hours: 24
   retain_count: 3
   prefix: "database-backups"
@@ -73,3 +77,4 @@ storage:
     # Reserve substantial headroom inside Backblaze's free 10 GB allowance
     # for verified SQLite snapshots, B2 object-version overhead, and safety.
     max_archive_bytes: 8500000000
+
