@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 from foia_archive.alerts import evaluate_alert
-from foia_archive.incident_ledger import record_incident
+from foia_archive.incident_ledger import list_incidents, record_incident
 
 class IncidentLedgerTests(unittest.TestCase):
     def setUp(self):
@@ -53,3 +53,19 @@ class IncidentLedgerTests(unittest.TestCase):
         first = record_incident(self.conn, self.repo, evaluate_alert(**self.base))
         second = record_incident(self.conn, self.repo, evaluate_alert(**{**self.base, "source_sha":"b"*40}))
         self.assertNotEqual(first["incident_id"], second["incident_id"])
+
+    def test_bounded_read_only_view_of_verified_incidents(self):
+        self.assertEqual(list_incidents(self.conn), [])
+        self.assertIsNone(self.conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE name = 'alert_incidents'"
+        ).fetchone())
+        decision = evaluate_alert(**self.base)
+        record_incident(self.conn, self.repo, decision)
+        rows = list_incidents(self.conn, limit=1)
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0]["repository"], self.repo)
+        self.assertEqual(rows[0]["source_sha"], "a" * 40)
+        self.assertEqual(rows[0]["severity"], "critical")
+        for invalid in (0, 101, True, "1"):
+            with self.subTest(limit=invalid), self.assertRaises(ValueError):
+                list_incidents(self.conn, limit=invalid)

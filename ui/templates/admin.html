@@ -225,6 +225,30 @@
 </section>
 
 <section class="admin-section">
+  <p class="eyebrow">Verified incidents</p>
+  <h2>Recent alert decisions</h2>
+  <div class="admin-card table-wrap">
+    {% if incidents %}
+      <table class="admin-table">
+        <thead><tr><th>Kind</th><th>Severity</th><th>Source revision</th><th>Observed</th></tr></thead>
+        <tbody>
+          {% for incident in incidents %}
+            <tr>
+              <td>{{ incident.kind }}</td>
+              <td>{{ incident.severity }}</td>
+              <td><code>{{ incident.repository }} @ {{ incident.source_sha[:12] }}</code></td>
+              <td>{{ incident.observed_at|timestamp }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="admin-muted">No verified incidents recorded. Alert delivery is not configured.</p>
+    {% endif %}
+  </div>
+</section>
+
+<section class="admin-section">
   <p class="eyebrow">System</p>
   <h2>Operational state</h2>
   <div class="admin-card">

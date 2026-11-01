@@ -25,6 +25,7 @@ from foia_archive.archive_storage import (
     get_archive_storage,
 )
 from foia_archive.database_backup import list_database_backups
+from foia_archive.incident_ledger import list_incidents
 from foia_archive.storage import (
     SORT_ORDERS,
     get_admin_dashboard_stats,
@@ -377,6 +378,7 @@ async def admin_dashboard(
     try:
         public_stats = get_archive_stats(conn)
         operational = get_admin_dashboard_stats(conn)
+        incidents = list_incidents(conn)
         schema_version = get_schema_version(conn)
     finally:
         conn.close()
@@ -400,6 +402,7 @@ async def admin_dashboard(
             admin_user=admin_user,
             stats=public_stats,
             operational=operational,
+            incidents=incidents,
             storage=storage_metrics,
             schema_version=schema_version,
             database_size=DB_PATH.stat().st_size if DB_PATH.exists() else 0,

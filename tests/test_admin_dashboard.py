@@ -18,6 +18,8 @@ from foia_archive.storage import (
     upsert_office,
     upsert_reading_room,
 )
+from foia_archive.alerts import evaluate_alert
+from foia_archive.incident_ledger import record_incident
 from ui import server
 
 
@@ -203,6 +205,19 @@ class AdminDashboardTests(unittest.TestCase):
         self.assertEqual(headers["www-authenticate"], "Basic")
 
     def test_admin_dashboard_renders_operational_and_storage_metrics(self):
+        from datetime import datetime, timezone
+        observed = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
+        conn = self.get_db()
+        try:
+            decision = evaluate_alert(
+                kind="crawl_failure", value=6, warning_threshold=2,
+                critical_threshold=5, observed_at=observed.isoformat(),
+                source_sha="a" * 40, now=observed, evidence_verified=True,
+            )
+            record_incident(conn, "neophilism/FOIA_Aggregator", decision)
+            conn.commit()
+        finally:
+            conn.close()
         with (
             patch.dict(
                 os.environ,
@@ -241,6 +256,10 @@ class AdminDashboardTests(unittest.TestCase):
         self.assertIn("Demo Reading Room", body)
         self.assertIn("Administrator Demo Record", body)
         self.assertIn("Disabled", body)
+        self.assertIn("Recent alert decisions", body)
+        self.assertIn("crawl_failure", body)
+        self.assertIn("neophilism/FOIA_Aggregator", body)
+        self.assertNotIn("secret-value", body)
 
 
 if __name__ == "__main__":

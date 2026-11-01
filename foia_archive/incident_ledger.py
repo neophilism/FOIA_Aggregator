@@ -59,3 +59,23 @@ def record_incident(conn: sqlite3.Connection, repository: str, decision: Mapping
     """, (incident_id, repository, source_sha, kind, severity, observed_at))
     return {"incident_id": incident_id, "newly_recorded": cursor.rowcount == 1,
             "notification_sent": False}
+
+
+def list_incidents(conn: sqlite3.Connection, *, limit: int = 25) -> list[dict]:
+    """Read a bounded ledger view without creating tables or triggering delivery."""
+    if type(limit) is not int or not 1 <= limit <= 100:
+        raise ValueError("Invalid incident limit")
+    if conn.execute(
+        "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'alert_incidents'"
+    ).fetchone() is None:
+        return []
+    rows = conn.execute("""
+        SELECT incident_id, repository, source_sha, kind, severity,
+               observed_at, created_at
+        FROM alert_incidents
+        ORDER BY created_at DESC, incident_id DESC
+        LIMIT ?
+    """, (limit,)).fetchall()
+    return [dict(zip(("incident_id", "repository", "source_sha", "kind",
+                      "severity", "observed_at", "created_at"), row))
+            for row in rows]
