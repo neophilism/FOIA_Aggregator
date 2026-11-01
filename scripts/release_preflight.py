@@ -15,15 +15,29 @@ from foia_archive.release_readiness import evaluate_release
 
 MAX_EVIDENCE_BYTES = 1024 * 1024
 
+def _unique_pairs(pairs):
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("Duplicate evidence key")
+        result[key] = value
+    return result
+
+def _reject_constant(_value):
+    raise ValueError("Nonfinite evidence value")
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description="Evaluate source-bound release evidence (no deployment).")
     parser.add_argument("evidence_file", type=Path, help="Provider-reviewed JSON evidence file")
     args = parser.parse_args(argv)
     try:
         evidence_file = args.evidence_file
-        if not evidence_file.is_file() or evidence_file.stat().st_size > MAX_EVIDENCE_BYTES:
-            raise ValueError("Evidence file missing or larger than 1 MiB")
-        evidence = json.loads(evidence_file.read_text(encoding="utf-8"))
+        with evidence_file.open("rb") as handle:
+            raw = handle.read(MAX_EVIDENCE_BYTES + 1)
+        if len(raw) > MAX_EVIDENCE_BYTES:
+            raise ValueError("Evidence file larger than 1 MiB")
+        evidence = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs,
+                              parse_constant=_reject_constant)
         assessment = evaluate_release(evidence)
     except (ValueError, OSError, TypeError, UnicodeError, json.JSONDecodeError):
         sys.stderr.write("Release evidence unavailable or invalid; no deployment authorized.\n")

@@ -13,7 +13,7 @@ def _review_link(value):
         raise ValueError("Untrusted evidence link")
     try:
         parsed = urlsplit(value)
-        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment:
+        if parsed.scheme != "https" or not parsed.hostname or parsed.username or parsed.password or parsed.fragment or parsed.query:
             raise ValueError("Untrusted evidence link")
         if parsed.port not in (None, 443) or not parsed.path.strip("/"):
             raise ValueError("Untrusted evidence link")

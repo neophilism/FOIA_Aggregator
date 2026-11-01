@@ -12,9 +12,11 @@ SCRIPT = ROOT / "scripts" / "release_preflight.py"
 
 class ReleasePreflightCliTests(unittest.TestCase):
     def _run(self, payload):
+        return self._run_raw(json.dumps(payload))
+    def _run_raw(self, payload):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "evidence.json"
-            path.write_text(json.dumps(payload), encoding="utf-8")
+            path.write_text(payload, encoding="utf-8")
             return subprocess.run([sys.executable, str(SCRIPT), str(path)],
                                   cwd=ROOT, capture_output=True, text=True, timeout=10)
     def _evidence(self):
@@ -38,3 +40,18 @@ class ReleasePreflightCliTests(unittest.TestCase):
         result = self._run({"secret":"do-not-print"})
         self.assertEqual(result.returncode, 2)
         self.assertNotIn("do-not-print", result.stderr)
+    def test_duplicate_or_nonfinite_evidence_is_rejected_without_echo(self):
+        valid = json.dumps(self._evidence())
+        for raw in (valid[:-1] + ',"api_health":{"secret":"do-not-print"}}',
+                    valid.replace('"passed": true', '"passed": true, "passed": false', 1),
+                    valid.replace('"passed": true', '"passed": NaN', 1)):
+            with self.subTest(raw=raw[:60]):
+                result = self._run_raw(raw)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(result.stdout, "")
+                self.assertNotIn("do-not-print", result.stderr)
+
+    def test_oversized_file_is_bounded_during_read(self):
+        result = self._run_raw(" " * (1024 * 1024 + 1))
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")

@@ -24,7 +24,8 @@ class ReleaseReadinessTests(unittest.TestCase):
         good = {name:self.record() for name in REQUIRED}
         for url in ("http://untrusted/", "https://", "https://localhost/health",
                     "https://127.0.0.1/data", "https://user:pass@example.org/run",
-                    "https://example.org:8080/results", "https://example.org/"):
+                    "https://example.org:8080/results", "https://example.org/",
+                    "https://example.org/run?token=secret"):
             with self.subTest(url=url), self.assertRaises(ValueError):
                 self.evaluate({**good, "api_health":self.record(evidence_url=url)})
     def test_stale_future_or_timezone_naive_observations_denied(self):
