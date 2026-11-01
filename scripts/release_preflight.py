@@ -32,6 +32,8 @@ def main(argv=None):
     args = parser.parse_args(argv)
     try:
         evidence_file = args.evidence_file
+        if not evidence_file.is_file():
+            raise ValueError("Evidence file missing or not regular")
         with evidence_file.open("rb") as handle:
             raw = handle.read(MAX_EVIDENCE_BYTES + 1)
         if len(raw) > MAX_EVIDENCE_BYTES:
@@ -39,7 +41,8 @@ def main(argv=None):
         evidence = json.loads(raw.decode("utf-8"), object_pairs_hook=_unique_pairs,
                               parse_constant=_reject_constant)
         assessment = evaluate_release(evidence)
-    except (ValueError, OSError, TypeError, UnicodeError, json.JSONDecodeError):
+    except (ValueError, OSError, TypeError, UnicodeError, RecursionError,
+            json.JSONDecodeError):
         sys.stderr.write("Release evidence unavailable or invalid; no deployment authorized.\n")
         return 2
     sys.stdout.write(json.dumps(assessment, sort_keys=True) + "\n")

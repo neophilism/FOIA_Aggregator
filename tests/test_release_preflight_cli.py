@@ -55,3 +55,9 @@ class ReleasePreflightCliTests(unittest.TestCase):
         result = self._run_raw(" " * (1024 * 1024 + 1))
         self.assertEqual(result.returncode, 2)
         self.assertEqual(result.stdout, "")
+
+    def test_deeply_nested_evidence_fails_cleanly(self):
+        result = self._run_raw("[" * 1100 + "0" + "]" * 1100)
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stdout, "")
+        self.assertNotIn("Traceback", result.stderr)
