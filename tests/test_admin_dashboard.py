@@ -18,6 +18,8 @@ from foia_archive.storage import (
     upsert_office,
     upsert_reading_room,
 )
+from foia_archive.alerts import evaluate_alert
+from foia_archive.incident_ledger import record_incident
 from ui import server
 
 
@@ -171,6 +173,20 @@ class AdminDashboardTests(unittest.TestCase):
         self.assertEqual(stats["download_statuses"][0]["label"], "downloaded")
         self.assertEqual(stats["extraction_methods"][0]["label"], "ocr")
         self.assertEqual(stats["database_archived_bytes"], 4096)
+        self.assertEqual(stats["never_archived_sources"], 0)
+
+    def test_never_archived_source_is_counted_without_false_document_attribution(self):
+        conn = self.get_db()
+        try:
+            upsert_reading_room(
+                conn, "https://example.gov/other/", "Other source", "agency",
+                None, None,
+            )
+            stats = get_admin_dashboard_stats(conn)
+        finally:
+            conn.close()
+        self.assertEqual(stats["sources"]["active"], 2)
+        self.assertEqual(stats["never_archived_sources"], 1)
 
     def test_admin_route_is_hidden_when_password_is_not_configured(self):
         with (
@@ -203,6 +219,19 @@ class AdminDashboardTests(unittest.TestCase):
         self.assertEqual(headers["www-authenticate"], "Basic")
 
     def test_admin_dashboard_renders_operational_and_storage_metrics(self):
+        from datetime import datetime, timezone
+        observed = datetime(2026, 10, 18, 12, tzinfo=timezone.utc)
+        conn = self.get_db()
+        try:
+            decision = evaluate_alert(
+                kind="crawl_failure", value=6, warning_threshold=2,
+                critical_threshold=5, observed_at=observed.isoformat(),
+                source_sha="a" * 40, now=observed, evidence_verified=True,
+            )
+            record_incident(conn, "neophilism/FOIA_Aggregator", decision)
+            conn.commit()
+        finally:
+            conn.close()
         with (
             patch.dict(
                 os.environ,
@@ -241,6 +270,11 @@ class AdminDashboardTests(unittest.TestCase):
         self.assertIn("Demo Reading Room", body)
         self.assertIn("Administrator Demo Record", body)
         self.assertIn("Disabled", body)
+        self.assertIn("Never archived", body)
+        self.assertIn("Recent alert decisions", body)
+        self.assertIn("crawl_failure", body)
+        self.assertIn("neophilism/FOIA_Aggregator", body)
+        self.assertNotIn("secret-value", body)
 
 
 if __name__ == "__main__":

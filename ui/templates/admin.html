@@ -119,6 +119,7 @@
       <dl class="admin-kv">
         <div><dt>Active</dt><dd>{{ "{:,}".format(operational.sources.active) }}</dd></div>
         <div><dt>Never succeeded</dt><dd>{{ "{:,}".format(operational.sources.never_succeeded) }}</dd></div>
+        <div><dt>Never archived</dt><dd>{{ "{:,}".format(operational.never_archived_sources) }}</dd></div>
         <div><dt>Stale &gt; 7 days</dt><dd>{{ "{:,}".format(operational.sources.stale_7d) }}</dd></div>
         <div><dt>403 / forbidden</dt><dd>{{ "{:,}".format(operational.sources.blocked_403) }}</dd></div>
         <div><dt>Rate-limited</dt><dd>{{ "{:,}".format(operational.sources.rate_limited) }}</dd></div>
@@ -222,6 +223,30 @@
       </ul>
     </div>
   </article>
+</section>
+
+<section class="admin-section">
+  <p class="eyebrow">Recorded incidents</p>
+  <h2>Recent alert decisions</h2>
+  <div class="admin-card table-wrap">
+    {% if incidents %}
+      <table class="admin-table">
+        <thead><tr><th>Kind</th><th>Severity</th><th>Source revision</th><th>Observed</th></tr></thead>
+        <tbody>
+          {% for incident in incidents %}
+            <tr>
+              <td>{{ incident.kind }}</td>
+              <td>{{ incident.severity }}</td>
+              <td><code>{{ incident.repository }} @ {{ incident.source_sha[:12] }}</code></td>
+              <td>{{ incident.observed_at|timestamp }}</td>
+            </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    {% else %}
+      <p class="admin-muted">No alert decisions recorded. External provider verification and alert delivery remain unconfigured.</p>
+    {% endif %}
+  </div>
 </section>
 
 <section class="admin-section">
