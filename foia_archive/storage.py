@@ -774,6 +774,20 @@ def get_admin_dashboard_stats(conn: sqlite3.Connection) -> Dict[str, Any]:
         """
     ).fetchone()
 
+    never_archived = conn.execute(
+        """
+        SELECT COUNT(*)
+        FROM reading_rooms rr
+        WHERE rr.active = 1
+          AND NOT EXISTS (
+              SELECT 1 FROM document_sources ds
+              JOIN documents d ON d.id = ds.document_id
+              WHERE ds.reading_room_id = rr.id
+                AND d.download_status = 'downloaded'
+          )
+        """
+    ).fetchone()[0]
+
     def grouped(query: str) -> List[Dict[str, Any]]:
         return [dict(row) for row in conn.execute(query).fetchall()]
 
@@ -843,6 +857,7 @@ def get_admin_dashboard_stats(conn: sqlite3.Connection) -> Dict[str, Any]:
                 "rate_limited",
             )
         },
+        "never_archived_sources": int(never_archived or 0),
         "download_statuses": grouped(
             """
             SELECT COALESCE(download_status, 'unknown') AS label, COUNT(*) AS count

@@ -119,6 +119,7 @@
       <dl class="admin-kv">
         <div><dt>Active</dt><dd>{{ "{:,}".format(operational.sources.active) }}</dd></div>
         <div><dt>Never succeeded</dt><dd>{{ "{:,}".format(operational.sources.never_succeeded) }}</dd></div>
+        <div><dt>Never archived</dt><dd>{{ "{:,}".format(operational.never_archived_sources) }}</dd></div>
         <div><dt>Stale &gt; 7 days</dt><dd>{{ "{:,}".format(operational.sources.stale_7d) }}</dd></div>
         <div><dt>403 / forbidden</dt><dd>{{ "{:,}".format(operational.sources.blocked_403) }}</dd></div>
         <div><dt>Rate-limited</dt><dd>{{ "{:,}".format(operational.sources.rate_limited) }}</dd></div>
@@ -225,7 +226,7 @@
 </section>
 
 <section class="admin-section">
-  <p class="eyebrow">Verified incidents</p>
+  <p class="eyebrow">Recorded incidents</p>
   <h2>Recent alert decisions</h2>
   <div class="admin-card table-wrap">
     {% if incidents %}
@@ -243,7 +244,7 @@
         </tbody>
       </table>
     {% else %}
-      <p class="admin-muted">No verified incidents recorded. Alert delivery is not configured.</p>
+      <p class="admin-muted">No alert decisions recorded. External provider verification and alert delivery remain unconfigured.</p>
     {% endif %}
   </div>
 </section>

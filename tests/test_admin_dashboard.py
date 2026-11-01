@@ -173,6 +173,20 @@ class AdminDashboardTests(unittest.TestCase):
         self.assertEqual(stats["download_statuses"][0]["label"], "downloaded")
         self.assertEqual(stats["extraction_methods"][0]["label"], "ocr")
         self.assertEqual(stats["database_archived_bytes"], 4096)
+        self.assertEqual(stats["never_archived_sources"], 0)
+
+    def test_never_archived_source_is_counted_without_false_document_attribution(self):
+        conn = self.get_db()
+        try:
+            upsert_reading_room(
+                conn, "https://example.gov/other/", "Other source", "agency",
+                None, None,
+            )
+            stats = get_admin_dashboard_stats(conn)
+        finally:
+            conn.close()
+        self.assertEqual(stats["sources"]["active"], 2)
+        self.assertEqual(stats["never_archived_sources"], 1)
 
     def test_admin_route_is_hidden_when_password_is_not_configured(self):
         with (
@@ -256,6 +270,7 @@ class AdminDashboardTests(unittest.TestCase):
         self.assertIn("Demo Reading Room", body)
         self.assertIn("Administrator Demo Record", body)
         self.assertIn("Disabled", body)
+        self.assertIn("Never archived", body)
         self.assertIn("Recent alert decisions", body)
         self.assertIn("crawl_failure", body)
         self.assertIn("neophilism/FOIA_Aggregator", body)
