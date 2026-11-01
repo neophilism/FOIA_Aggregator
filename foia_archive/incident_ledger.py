@@ -32,7 +32,8 @@ def record_incident(conn: sqlite3.Connection, repository: str, decision: Mapping
     calling evaluate_alert and passing its decision into this ledger.
     Transaction commit/rollback remains the caller's responsibility.
     """
-    if not isinstance(repository, str) or not REPOSITORY.fullmatch(repository):
+    if (not isinstance(repository, str) or not REPOSITORY.fullmatch(repository)
+            or any(part in (".", "..") for part in repository.split("/"))):
         raise ValueError("Invalid incident repository")
     if not isinstance(decision, Mapping):
         raise ValueError("Invalid incident decision")

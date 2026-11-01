@@ -45,6 +45,9 @@ class IncidentLedgerTests(unittest.TestCase):
             record_incident(self.conn, self.repo, {**original, "severity": []})
         with self.assertRaises(ValueError):
             record_incident(self.conn, "../invalid", original)
+        for repository in ("./invalid", "owner/..", "owner/."):
+            with self.subTest(repository=repository), self.assertRaises(ValueError):
+                record_incident(self.conn, repository, original)
 
     def test_distinct_source_revision_does_not_collide(self):
         first = record_incident(self.conn, self.repo, evaluate_alert(**self.base))
