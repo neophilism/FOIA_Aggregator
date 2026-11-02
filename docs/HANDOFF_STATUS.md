@@ -8,6 +8,36 @@
 - [README](../README.md), [corpus expansion/storage](CORPUS_EXPANSION.md), [source access](SOURCE_ACCESS.md), [deployment](PRESENTATION_DEPLOYMENT.md), [admin](ADMIN_DASHBOARD.md).
 - [Engine Room certification audit](https://github.com/neophilism/Engine-Room/issues/71).
 
+## FA-001 recovery-audit hardening — October 17, 2026
+
+The recovery audit now compares source/agency identities, document attribution,
+known metadata, per-document object associations, extracted-text fingerprints and
+search-row fingerprints, not only document counts or independent URL/key sets.
+All evidence is read in one read-only SQLite transaction. Missing files, corrupt
+or unsupported schemas, orphaned relationships and downloaded records without
+verifiable B2 identities fail closed. Surrogate ID changes and previously unknown
+metadata enrichment do not imply lost evidence. Divergent known values require
+review rather than automatic selection of either database.
+
+The existing `candidate_appears_safe_for_archived_objects` promotion field now
+also requires preservation of that evidence and no known object-size mismatch.
+Reports contain counts and booleans, not document bodies or signed URLs. The
+candidate cannot be used as its own restore destination, and comparison restore
+targets must be fresh (`overwrite=False`). No checkpoint is published by audit.
+
+Nineteen new credential-free SQLite fixture tests passed locally. Full repository
+CI and PR head evidence are tracked on the mapped FA-001 follow-up PR, not inferred
+from these fixtures. Existing pending PRs #47 (promotion), #48 (upload fallback)
+and #41 (single writer) remain separate work and were inspected, not duplicated.
+The gateway cannot inspect/merge those legacy branches as the current mapped work
+branch. Never bypass it through direct GitHub mutations.
+
+Still pending: live B2 manifest/restore and selected-candidate audit, explicit
+single-writer coordination, safe promotion through authorized tooling, actual
+post-promotion restore, and deployed replica verification. Listing size alone
+does not prove object-content hashes; no live B2/data synchronization, production
+acceptance, migration, paid resource or schedule activation is claimed here.
+
 ## Baseline findings
 - Code already has source discovery, curated and IC coverage, PAL/generic reading-room crawler, safe downloader, OCR/legacy Office text extraction, SQLite FTS5, B2 storage/recovery, FastAPI public search/admin, and manual/scheduled GitHub workflows. **Functionality/production success were not retested in this documentation change.**
 - The approved .exechub/project.yml remains a **10-unit** operating expansion. Additional FC-01..14 scope is explicitly subsequent user-requested expansion; track its count separately with audited PR mappings.
@@ -40,3 +70,4 @@ B2 commands require correctly configured server-side environment/secrets and mus
 
 ## Release/handoff exit criteria
 Every plan unit has explicit actual PR mapping and test evidence; one authoritative writer; two observed successful serialized scheduled runs; non-regressing B2 DB checkpoints and full object manifest; diverse primary/third-party FOIA source census and historical backfill status; date/format/body/OCR search and signed downloads on the deployed site; honest current storage/coverage dashboard; cost and API restrictions documented. Until then, do not certify broad nationwide FOIA archive coverage or unblock major dependent FOIA Bias Analysis / Send FOIA Log Requests buildout.
+
